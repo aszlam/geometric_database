@@ -72,6 +72,7 @@ if __name__ == "__main__":
     parser.add_argument("--p2s_lr", type=float, default=.0001)
     parser.add_argument("--p2f_layers", type=int, default=4)
     parser.add_argument("--p2s_layers", type=int, default=4)
+    parser.add_argument("--locs_per_scene", type=int, default=1024)
     parser.add_argument("--hdim", type=int, default=128)
     parser.add_argument("--num_scenes", type=int, default=15)
     parser.add_argument("--optim_type", default="adam")
@@ -83,7 +84,7 @@ if __name__ == "__main__":
     
 
     g = XYABGenerator(10)
-    XYAB = g.generate(n=10)
+    XYAB = g.generate(n=500)
     gd = DebugXYABGenerator(XYAB) 
     
     scenes = []
@@ -92,7 +93,8 @@ if __name__ == "__main__":
         scenes.append(RoomWithRandomDisk(sl=10))
 #        gens.append(gd)
         gens.append(XYABGenerator(10))
-    V = VDistDataset(scenes, gens)
+    V = VDistDataset(scenes, gens, samples_per_scene=args.locs_per_scene)
+    V.mode = "batch"
 
     p2f_opts = {"embedding_dim": args.hdim,
                 "use_batchnorm": args.use_batchnorm,
@@ -115,7 +117,7 @@ if __name__ == "__main__":
 #        dataset, collate_fn=collater, batch_size=batch_sz, shuffle=(sampler is None), sampler=sampler, drop_last=True, num_workers=args.num_workers
 #    )
 
-    dataloader = tds.DataLoader(V, batch_size=5)
+#    dataloader = tds.DataLoader(V, batch_size=5)
     optimizers = {"p2fs": [oc[args.optim_type](p2f.parameters(), lr=args.p2f_lr) for p2f in p2fs],
                   "p2s": oc[args.optim_type](p2s.parameters(), lr=args.p2s_lr)}
     
@@ -124,7 +126,9 @@ if __name__ == "__main__":
     for i in range(1000):
         stored_loss = 0.0
         count = 0.0
-        for b in dataloader:
+        for j in range(200):
+#        for b in dataloader:
+            b = V[j]
             count += 1
             l, t = train_batch(model, b, optimizers, args)
             if not times:
@@ -133,4 +137,4 @@ if __name__ == "__main__":
                 times = [times[i] + t[i] for i in range(len(t))]
             stored_loss += l.item()
         print(stored_loss/count)
-#        print(times)
+        print(times)

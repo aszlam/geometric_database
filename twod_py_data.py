@@ -230,21 +230,34 @@ class VDistDataset(tds.Dataset):
     def __init__(self, vdists, xyab_generators, N=1000, samples_per_scene=10):
         self.vdists = vdists
         # TODO make sure generators and scenes match up w.r.t. sl etc
-        self.xyzab_generators = xyab_generators
+        self.xyab_generators = xyab_generators
 
         # size of an epoch:
         self.N = N
         
         self.num_scenes = len(self.vdists)
         self.samples_per_scene = samples_per_scene
+        self.mode = "single_scene" # "batch" or single_scene"
         
     def __getitem__(self, index):
-        # ignoring index...
-        vidx = torch.randint(0, self.num_scenes, (1,))
-        S = self.vdists[vidx]
-        G = self.xyzab_generators[vidx]
-        XYAB = G.generate(n=self.samples_per_scene)
-        return vidx, XYAB, S.get_vdist_batch(XYAB)
+        if self.mode == "single_scene":
+            # ignoring index...
+            vidx = torch.randint(0, self.num_scenes, (1,))
+            S = self.vdists[vidx]
+            G = self.xyab_generators[vidx]
+            XYAB = G.generate(n=self.samples_per_scene)
+            return vidx, XYAB, S.get_vdist_batch(XYAB)
+        else:
+            nv = len(self.vdists)
+            vidxs = torch.arange(0, nv, dtype=torch.int64)
+            XYAB = torch.stack([G.generate(n=self.samples_per_scene) for G in self.xyab_generators])
+            dists = torch.zeros(nv, self.samples_per_scene)
+            for i in range(nv):
+                dists[i] = self.vdists[i].get_vdist_batch(XYAB[i])
+            return vidxs, XYAB, dists
+                
+                
+            
 
     def __len__(self):
         return self.N
