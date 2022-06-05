@@ -72,6 +72,8 @@ if __name__ == "__main__":
     parser.add_argument("--p2s_lr", type=float, default=.0001)
     parser.add_argument("--p2f_layers", type=int, default=4)
     parser.add_argument("--p2s_layers", type=int, default=4)
+    parser.add_argument("--fourier_embedding_dim", type=int, default=-1)
+    parser.add_argument("--fourier_embedding_scale", type=float, default=2.0)
     parser.add_argument("--locs_per_scene", type=int, default=1024)
     parser.add_argument("--hdim", type=int, default=128)
     parser.add_argument("--num_scenes", type=int, default=15)
@@ -98,11 +100,17 @@ if __name__ == "__main__":
 
     p2f_opts = {"embedding_dim": args.hdim,
                 "use_batchnorm": args.use_batchnorm,
-                "num_layers": args.p2f_layers}
+                "num_layers": args.p2f_layers,
+                "fourier_embedding_dim": args.fourier_embedding_dim,
+                "fourier_embedding_scale": args.fourier_embedding_scale,                
+    }
 
     p2s_opts = {"embedding_dim": args.hdim,
                 "use_batchnorm": args.use_batchnorm,
-                "num_layers": args.p2s_layers}
+                "num_layers": args.p2s_layers,
+                "fourier_embedding_dim": args.fourier_embedding_dim,
+                "fourier_embedding_scale": args.fourier_embedding_scale
+    }
 
     model = {"p2fs": [PosToFeature(p2f_opts) for i in range(len(scenes))],
              "p2s": PoseToScalar(p2s_opts)}
@@ -111,7 +119,18 @@ if __name__ == "__main__":
     if args.cuda:
         for p2f in p2fs:
             p2f.cuda()
+            #fixme why is this not propagating?
+            try:
+                p2f.embedding[0].cuda()
+            except:
+                pass
         p2s.cuda()
+        #fixme why is this not propagating?
+        try:
+            p2s.embedding[0].cuda()
+        except:
+            pass
+        
     
 #    dataloader = tds.DataLoader(
 #        dataset, collate_fn=collater, batch_size=batch_sz, shuffle=(sampler is None), sampler=sampler, drop_last=True, num_workers=args.num_workers

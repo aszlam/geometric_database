@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 
@@ -39,7 +40,12 @@ class PosToFeature(nn.Module):
         super().__init__()
         self.opts = opts
         d = opts["embedding_dim"]
-        self.embedding = nn.Linear(2, d)
+        if opts.get("fourier_embedding_dim") and opts["fourier_embedding_dim"] > 0:
+            ff = FourierFeatures(opts)
+            proj = nn.Linear(opts["fourier_embedding_dim"]*2, d)
+            self.embedding = nn.Sequential(ff, proj)
+        else:
+            self.embedding = nn.Linear(2, d)
         self.relu = nn.ReLU()
         layers = [ResidualBlock(d, d, use_batchnorm=opts.get("use_batchnorm", False))
                   for i in range(opts["num_layers"])]
@@ -56,7 +62,12 @@ class PoseToScalar(nn.Module):
     def __init__(self, opts):
         super().__init__()
         d = opts["embedding_dim"]
-        self.embedding = nn.Linear(2, d)
+        if opts.get("fourier_embedding_dim") and opts["fourier_embedding_dim"] > 0:
+            ff = FourierFeatures(opts)
+            proj = nn.Linear(opts["fourier_embedding_dim"]*2, d)
+            self.embedding = nn.Sequential(ff, proj)
+        else:
+            self.embedding = nn.Linear(2, d)
         self.combiner = nn.Linear(2*d, d)
         layers = [ResidualBlock(d, d, use_batchnorm=opts.get("use_batchnorm", False))
                   for i in range(opts["num_layers"])]
@@ -78,5 +89,26 @@ class PoseToScalar(nn.Module):
         return self.out(z)
        
         
-    
+class FourierFeatures(nn.Module):
+    def __init__(self, opts):
+        super().__init__()
+        d = opts["fourier_embedding_dim"]
+        alpha = opts["fourier_embedding_scale"]
+        self.B = 2*math.pi*alpha * torch.randn(2, d)
+        self.B.requires_grad = False
 
+    def forward(self, x):
+        """
+        assumes B x 2 input
+        """
+        return torch.cat([torch.cos(x@self.B), torch.sin(x@self.B)], 1) 
+
+    def cuda(self, device=None):
+        self.B = self.B.cuda(device=device)
+        self.B.requires_grad = False
+        return self
+        
+    def cpu(self):
+        self.B = self.B.cpu()
+        self.B.requires_grad = False
+        return self
