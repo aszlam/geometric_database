@@ -85,7 +85,6 @@ def custom_pose_extractor_factory(grid_subdivision_size=50, height_grids=5):
             new_poses = []
             height_low, height_high = -height_grids // 2, height_grids // 2 + 1
             for _, pose in enumerate(poses):
-                # TODO mahi: check if the height variation generates interesting views.
                 for camera_height, target_height in product(
                     range(height_low, height_high), range(height_low, height_high)
                 ):
