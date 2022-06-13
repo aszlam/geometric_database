@@ -66,7 +66,7 @@ class HabitatViewDataset(Dataset):
             "truth": raw_semantic_output.astype(int),
             "depth": sample["depth"],
             "camera_pos": camera_pos,
-            "camera_direction": camera_direction,
+            # "camera_direction": camera_direction,
             "scene_name": scene_fp,
         }
 

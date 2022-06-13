@@ -28,10 +28,10 @@ if __name__ == "__main__":
                 ax.axis("off")
                 if img_type == "rgb":
                     plt.imshow(img.numpy().transpose(1, 2, 0))
-                else:
+                elif img_type in ("depth", "truth"):
                     plt.imshow(img.numpy())
 
-            plt.savefig(f"{k}_fig.png", dpi=200)
+            # plt.savefig(f"{k}_fig.png", dpi=200)
 
         batch_size = len(sample_batch["rgb"])
         for k in sample_batch.keys():
