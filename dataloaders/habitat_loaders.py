@@ -92,6 +92,9 @@ class HabitatLocationDataset(Dataset):
     Parameters:
     habitat_view_dataset: a view dataset constructed already that we can iterate over and
     find object semantic ids as well as their positions.
+    object_extraction_depth: along the ray between the camera pose and where it hits the wall
+    every object_extarction_depth length, we add a new point to the x y z dataloader saying
+    it is empty.
     """
 
     def __init__(
