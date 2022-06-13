@@ -11,7 +11,7 @@ import logging
 CUSTOM_POSE_EXTRACTOR = "3d_pose_extract"
 
 
-def custom_pose_extractor_factory(grid_subdivision_size=50, height_grids=2):
+def custom_pose_extractor_factory(grid_subdivision_size=50, height_grids=0):
     @registry.register_pose_extractor(name=CUSTOM_POSE_EXTRACTOR)
     class PoseExtractor3d(PoseExtractor):
         def extract_poses(self, view, fp):

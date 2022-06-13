@@ -1,13 +1,13 @@
 from typing import List, Tuple, Union
-import torch
-from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
 
-from habitat_sim.utils.data import ImageExtractor
-
+import habitat_sim
 import numpy as np
-import matplotlib.pyplot as plt
-
+import tqdm
+import quaternion
+from habitat_sim.utils.common import quat_rotate_vector
+from habitat_sim.utils.data import ImageExtractor
+from torch.utils.data import Dataset
+from torchvision import transforms
 from utils.habitat_utils import CUSTOM_POSE_EXTRACTOR, custom_pose_extractor_factory
 
 
@@ -66,7 +66,7 @@ class HabitatViewDataset(Dataset):
             "truth": raw_semantic_output.astype(int),
             "depth": sample["depth"],
             "camera_pos": camera_pos,
-            # "camera_direction": camera_direction,
+            "camera_direction": quaternion.as_float_array(camera_direction),
             "scene_name": scene_fp,
         }
 
@@ -76,3 +76,61 @@ class HabitatViewDataset(Dataset):
             output["depth"] = self.transforms(output["depth"]).squeeze(0)
 
         return output
+
+
+class HabitatLocationDataset(Dataset):
+    """
+    A dataset that helps us load data from Habitat datasets.
+
+    This custom dataset gives us a world (x, y, z) coordinate alongside a semantic tag that
+    exists in that point.
+
+    The algorithm to determine what exists at any point works in a somewhat unintelligent way
+    which takes a view, marches the camera axis ray until it hits something, labels that obj,
+    and labels everything between camera and that obj as "empty"/"air"/etc.
+
+    Parameters:
+    habitat_view_dataset: a view dataset constructed already that we can iterate over and
+    find object semantic ids as well as their positions.
+    """
+
+    def __init__(
+        self, habitat_view_ds: HabitatViewDataset, object_extraction_depth: float = 0.1
+    ):
+        self.habitat_view_dataset = habitat_view_ds
+        self.image_extractor = habitat_view_ds.image_extractor
+        self.poses = self.image_extractor.poses
+
+        self.coordinates = []
+        self.semantic_label = []
+
+        self._extract_dataset()
+
+    def _extract_dataset(self):
+        # Itereate over the view dataset to extract all possible object tags.
+        for idx in tqdm.trange(len(self.habitat_view_dataset)):
+            data_dict = self.habitat_view_dataset[idx]
+            camera_pos, camera_dir = (
+                data_dict["camera_pos"],
+                data_dict["camera_direction"],
+            )
+            depth_map = data_dict["depth"]
+            frame_size = depth_map.shape[0]  # Assuming depth map is a square image.
+            # Now, find out how far the center of the image is from depth map.
+            direction_vector = quat_rotate_vector(
+                q=quaternion.from_float_array(camera_dir), v=habitat_sim.geo.FRONT
+            )
+            distance = depth_map[frame_size // 2, frame_size // 2].item()
+            xyz_loc = camera_pos + (direction_vector * distance) / np.linalg.norm(
+                direction_vector
+            )
+            self.coordinates.append(xyz_loc)
+            self.semantic_label.append(
+                data_dict["truth"][frame_size // 2, frame_size // 2]
+            )
+
+    def __len__(self):
+        return len(self.coordinates)
+
+    def __getitem__(self, idx):
+        return {"xyz": self.coordinates[idx], "label": self.semantic_label[idx]}

@@ -1,20 +1,21 @@
 import matplotlib.pyplot as plt
-from dataloaders.habitat_loaders import HabitatViewDataset
+from dataloaders.habitat_loaders import HabitatViewDataset, HabitatLocationDataset
 from torch.utils.data import DataLoader
 
 if __name__ == "__main__":
     # Replace with the path to your scene file
     SCENE_FILEPATH = [
-        "/private/home/notmahi/data/replica_dataset/apartment_0/habitat/mesh_semantic.ply",
-        "/private/home/notmahi/data/replica_dataset/apartment_1/habitat/mesh_semantic.ply",
-        "/private/home/notmahi/data/replica_dataset/apartment_2/habitat/mesh_semantic.ply",
+        "/private/home/notmahi/data/replica_dataset/room_0/habitat/mesh_semantic.ply",
+        # "/private/home/notmahi/data/replica_dataset/room_1/habitat/mesh_semantic.ply",
+        # "/private/home/notmahi/data/replica_dataset/room_2/habitat/mesh_semantic.ply",
     ]
     BATCH_SIZE = 6
 
     # Run basic sanity test on the dataloader.
     dataset = HabitatViewDataset(
         habitat_scenes=SCENE_FILEPATH,
-        pose_extractor_grid_size=10,
+        pose_extractor_grid_size=5,
+        height_levels=3,
     )
 
     # Create a Dataloader to batch and shuffle our data
@@ -37,5 +38,11 @@ if __name__ == "__main__":
         for k in sample_batch.keys():
             show_row(sample_batch[k], batch_size, k)
 
-    _, sample_batch = next(enumerate(dataloader))
-    show_batch(sample_batch)
+    # _, sample_batch = next(enumerate(dataloader))
+    # show_batch(sample_batch)
+
+    location_dataset = HabitatLocationDataset(habitat_view_ds=dataset)
+    # Create a Dataloader to batch and shuffle our data
+    xyz_dataloader = DataLoader(location_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    _, sample_batch = next(enumerate(xyz_dataloader))
+    print(sample_batch)
