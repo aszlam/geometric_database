@@ -14,6 +14,8 @@ optimizer:
 image_size: 224
 device: cuda
 representation_dim: 512
+batch_size: 128
+
 
 positional_encoder_view:
   _target_: models.scene_models.positional_encoding.PositionalEmbedding

@@ -3,7 +3,7 @@ from quaternion import quaternion
 import numpy as np
 import habitat_sim.registry as registry
 
-from habitat_sim.utils.data import ImageExtractor, PoseExtractor
+from habitat_sim.utils.data import PoseExtractor
 from itertools import product
 import logging
 
@@ -16,16 +16,20 @@ def custom_pose_extractor_factory(grid_subdivision_size=50, height_grids=0):
     class PoseExtractor3d(PoseExtractor):
         def extract_poses(self, view, fp):
             height, width = view.shape
-            logging.debug(
-                "Grid dimensions: {height} x {width}".format(height=height, width=width)
-            )
             dist = min(height, width) // grid_subdivision_size
+            if dist == 0:
+                logging.warn(
+                    "Too fine of a subdivision, grid dimensions: {height} x {width}".format(
+                        height=height, width=width
+                    )
+                )
 
             # Create a grid of camera positions
             n_gridpoints_width, n_gridpoints_height = (
                 width // dist - 1,
                 height // dist - 1,
             )
+            logging.warn(f"{dist} {n_gridpoints_height} {n_gridpoints_width}")
 
             # Exclude camera positions at invalid positions
             # and find all the valid positions for our camera.
@@ -55,6 +59,7 @@ def custom_pose_extractor_factory(grid_subdivision_size=50, height_grids=0):
             ) and 0 <= col < len(view[0])
             point_label_pairs = []
             r, c = point
+            assert dist >= 2, "Neighbors are overlapping with original points."
             neighbor_dist = dist // 2
             neighbors = [
                 (r - neighbor_dist, c),
@@ -114,7 +119,7 @@ def custom_pose_extractor_factory(grid_subdivision_size=50, height_grids=0):
                             "Quarternion conversion failed for coordinates:\n"
                             f"Camera: {new_pos}, target: {new_cpi}"
                         )
-                        continue
+                        raise ValueError("Wrong dimensions")
                     new_pos_t: Tuple[int, int] = tuple(new_pos)  # type: ignore[assignment]
                     new_poses.append((new_pos_t, new_rot, filepath))
 

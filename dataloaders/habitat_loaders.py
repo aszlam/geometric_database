@@ -1,4 +1,4 @@
-from typing import List, Tuple, Union
+from typing import Iterable, List, Tuple, Union
 
 import habitat_sim
 import numpy as np
@@ -30,17 +30,24 @@ class HabitatViewDataset(Dataset):
 
     def __init__(
         self,
-        habitat_scenes: Union[str, List[str]],
+        habitat_scenes: Union[str, Iterable[str]],
         view_components: List[str] = ["rgba", "depth", "semantic"],
         pose_extractor_grid_size: int = 50,
         height_levels: int = 5,
-        image_size: Tuple[int, int] = (512, 512),
+        image_size: Iterable[int] = (512, 512),
         transforms=transforms.Compose([transforms.ToTensor()]),
     ):
         # Sets the grid size and the height levels in the pose extractor
         custom_pose_extractor_factory(pose_extractor_grid_size, height_levels)
+        self.habitat_scenes = (
+            [habitat_scenes]
+            if isinstance(habitat_scenes, str)
+            else list(habitat_scenes)
+        )
+        assert len(image_size) == 2
+        self.image_size = tuple(image_size)
         self.image_extractor = ImageExtractor(
-            scene_filepath=habitat_scenes,
+            scene_filepath=self.habitat_scenes,
             pose_extractor_name=CUSTOM_POSE_EXTRACTOR,
             img_size=image_size,
             output=view_components,

@@ -57,7 +57,7 @@ class PositionalEmbedding(nn.Module):
     ):
         super().__init__()
         self.layer_1 = nn.Linear(coordinate_dim, hidden_dim)
-        self.gelu = F.gelu()
+        self.gelu = nn.GELU()
         self.layer_2 = nn.Linear(
             hidden_dim, fourier_input_dim if fourier_features else representation_dim
         )

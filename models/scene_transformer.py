@@ -22,16 +22,16 @@ class SceneTransformer(nn.Module):
         super().__init__()
         self.scene_model = scene_model
         self.rep_dim = representation_dim
-        # Set up tokens for views (updates) and queries
+        # Set up tokens for views (updates) and queries so that our model can separate them
         self.view_token = nn.parameter.Parameter(data=torch.randn(self.rep_dim))
         self.query_token = nn.parameter.Parameter(data=torch.randn(self.rep_dim))
 
         # Send to device.
         self.scene_model = self.scene_model.to(device)
-        self.view_token = self.scene_model.to(device)
-        self.query_token = self.scene_model.to(device)
+        self.view_token.data = self.view_token.data.to(device)
+        self.query_token.data = self.query_token.data.to(device)
 
-    def register_view_encoder(
+    def register_encoders(
         self,
         positional_encoder_view: PositionalEmbedding,
         positional_encoder_query: PositionalEmbedding,
@@ -64,3 +64,5 @@ class SceneTransformer(nn.Module):
         return self.scene_model(scene_tf_input)
         # TODO Mahi decide if we want to add the positional encoding at every intermediate
         # transformer layers anyway
+        # TODO Also figure out the attention map between different inputs. For example, we
+        # probably don't want attention going into the pushed updates from the queries.

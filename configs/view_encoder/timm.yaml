@@ -1,4 +1,4 @@
-_target_: models.view_encoders.timm_view_encoder
+_target_: models.view_encoders.timm_view_encoder.TimmViewEncoder
 view_shape:
   - ${image_size}
   - ${image_size}
@@ -6,3 +6,4 @@ timm_class: resnet18
 semantic_embedding_len: 16
 num_semantic_classes: 100
 device: ${device}
+representation_length: ${representation_dim}

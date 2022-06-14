@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Union
 import torch
 from torch import nn
 
@@ -79,6 +79,7 @@ class Transformer(nn.Module):
         dim_heads: int,
         mlp_dim: int,
         dropout: float = 0.0,
+        device: Union[str, torch.device] = "cuda",
     ) -> None:
         super().__init__()
 
@@ -88,19 +89,22 @@ class Transformer(nn.Module):
                 nn.ModuleList(
                     [
                         PreNorm(
+                            dim,
                             Attention(
                                 dim=dim,
                                 heads=heads,
                                 dim_heads=dim_heads,
                                 dropout=dropout,
-                            )
+                            ),
                         ),
                         PreNorm(
-                            FeedForward(dim=dim, hidden_dim=mlp_dim, dropout=dropout)
+                            dim,
+                            FeedForward(dim=dim, hidden_dim=mlp_dim, dropout=dropout),
                         ),
                     ]
                 )
             )
+        self.layers.to(device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         for attn, ff in self.layers:

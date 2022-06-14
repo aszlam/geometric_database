@@ -25,7 +25,7 @@ class TimmViewEncoder(AbstractViewEncoder):
         super().__init__(
             view_shape=view_shape, representation_length=representation_length
         )
-        self.view_shape = view_shape
+        self.view_shape = tuple(view_shape)
         self.semantic_embedding_layer = nn.Embedding(
             num_embeddings=num_semantic_classes,
             embedding_dim=semantic_embedding_len,
