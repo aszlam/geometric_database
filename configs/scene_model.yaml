@@ -1,0 +1,31 @@
+defaults:
+  - _self_
+  - view_encoder: timm
+  - scene_model: transformer
+  - dataset: habitat
+
+optimizer: 
+  - _target_: torch.optim.Adam
+  - lr: 1e-4
+  - betas:
+    - 0.9
+    - 0.999
+
+image_size: 224
+device: cuda
+representation_dim: 512
+
+positional_encoder_view:
+  _target_: models.scene_models.positional_encoding.PositionalEmbedding
+  coordinate_dim: 3
+  representation_dim: ${representation_dim}
+
+positional_encoder_query:
+  _target_: models.scene_models.positional_encoding.PositionalEmbedding
+  coordinate_dim: 3
+  representation_dim: ${representation_dim}
+
+positional_encoder_quat:
+  _target_: models.scene_models.positional_encoding.PositionalEmbedding
+  coordinate_dim: 4
+  representation_dim: ${representation_dim}

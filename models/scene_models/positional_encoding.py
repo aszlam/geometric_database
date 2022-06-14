@@ -5,6 +5,10 @@ import math
 
 
 class FourierFeatures(nn.Module):
+    """
+    Project inputs to randomized fourier features.
+    """
+
     def __init__(
         self,
         input_dim: int,

@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict, Iterable
 
 import einops
 import timm
@@ -15,7 +15,7 @@ class TimmViewEncoder(AbstractViewEncoder):
 
     def __init__(
         self,
-        view_shape: Tuple[int, ...],
+        view_shape: Iterable[int],
         representation_length: int,
         timm_class: str,
         semantic_embedding_len: int,
@@ -25,6 +25,7 @@ class TimmViewEncoder(AbstractViewEncoder):
         super().__init__(
             view_shape=view_shape, representation_length=representation_length
         )
+        self.view_shape = view_shape
         self.semantic_embedding_layer = nn.Embedding(
             num_embeddings=num_semantic_classes,
             embedding_dim=semantic_embedding_len,
@@ -46,7 +47,7 @@ class TimmViewEncoder(AbstractViewEncoder):
 
     def _setup_adapters(self):
         BATCH_SIZE = 2
-        view_shape = (224, 224)
+        view_shape = self.view_shape
         depth = torch.randn((BATCH_SIZE,) + view_shape)
         rgba = torch.randn((BATCH_SIZE, 4) + view_shape)
         semantic_segmentation = torch.randint_like(

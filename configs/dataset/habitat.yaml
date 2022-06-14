@@ -1,0 +1,13 @@
+view_dataset:
+  _target_: dataloaders.HabitatViewDataset
+  habitat_scenes:
+    - "/private/home/notmahi/data/replica_dataset/room_0/habitat/mesh_semantic.ply"
+    - "/private/home/notmahi/data/replica_dataset/room_1/habitat/mesh_semantic.ply"
+    - "/private/home/notmahi/data/replica_dataset/room_2/habitat/mesh_semantic.ply"
+  pose_extractor_grid_size: 50
+  height_levels: 5
+  image_size: ${image_size}
+
+xyz_dataset:
+  _target_: dataloaders.HabitatLocationDataset
+  habitat_view_ds: ???  # Filled in with view dataset in runtime.
