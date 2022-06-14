@@ -52,16 +52,26 @@ class SceneTransformer(nn.Module):
         semantic representation of the scene at position x y z.
         """
         encoded_views = self.view_encoder(view_dict)
-        encoded_view_xyz = self.view_xyz_encoder(view_dict["camera_pos"])
-        encoded_view_quat = self.view_quat_encoder(view_dict["camera_direction"])
-        encoded_query_xyz = self.query_xyz_encoder(query_xyz)
+        encoded_view_xyz = self.view_xyz_encoder(view_dict["camera_pos"].float())
+        encoded_view_quat = self.view_quat_encoder(
+            view_dict["camera_direction"].float()
+        )
+        encoded_query_xyz = self.query_xyz_encoder(query_xyz.float())
 
         views = self.view_token + encoded_views + encoded_view_xyz + encoded_view_quat
         queries = self.query_token + encoded_query_xyz
-        scene_tf_input = torch.cat(
-            [views, queries], dim=0
+        # Right now, in the transformer, there is a batch and there is a sequence.
+        # We do not make a distinction right now, and just use the batch_size as 1
+        # and sequence size as the full batch size. However, we can help the network learn
+        # better priors by shuffling around stuff and creating multiple batches from the
+        # same encoded sequences.
+        # TODO Mahi: once we have gotten the encoded views and queries, randomly shuffle
+        # and use half of them in each minibatch.
+        scene_tf_input = torch.cat([views, queries], dim=0).unsqueeze(
+            0
         )  # Join along batch axis since scene_tf operates on sets anyway.
-        return self.scene_model(scene_tf_input)
+        output = self.scene_model(scene_tf_input)
+        return output
         # TODO Mahi decide if we want to add the positional encoding at every intermediate
         # transformer layers anyway
         # TODO Also figure out the attention map between different inputs. For example, we

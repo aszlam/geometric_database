@@ -15,19 +15,19 @@ image_size: 224
 device: cuda
 representation_dim: 512
 batch_size: 128
+num_workers: 0
+train_epochs: 10
+eval_every: 1
 
 
-positional_encoder_view:
+positional_encoder_xyz:
   _target_: models.scene_models.positional_encoding.PositionalEmbedding
   coordinate_dim: 3
   representation_dim: ${representation_dim}
-
-positional_encoder_query:
-  _target_: models.scene_models.positional_encoding.PositionalEmbedding
-  coordinate_dim: 3
-  representation_dim: ${representation_dim}
+  device: ${device}
 
 positional_encoder_quat:
   _target_: models.scene_models.positional_encoding.PositionalEmbedding
   coordinate_dim: 4
   representation_dim: ${representation_dim}
+  device: ${device}

@@ -72,7 +72,7 @@ class HabitatViewDataset(Dataset):
             "rgb": sample["rgba"],
             "truth": raw_semantic_output.astype(int),
             "depth": sample["depth"],
-            "camera_pos": camera_pos,
+            "camera_pos": np.array(camera_pos),
             "camera_direction": quaternion.as_float_array(camera_direction),
             "scene_name": scene_fp,
         }
