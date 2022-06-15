@@ -1,5 +1,6 @@
 from typing import Iterable, List, Tuple, Union
 
+import torch
 import habitat_sim
 import numpy as np
 import tqdm
@@ -9,6 +10,7 @@ from habitat_sim.utils.data import ImageExtractor
 from torch.utils.data import Dataset
 from torchvision import transforms
 from utils.habitat_utils import CUSTOM_POSE_EXTRACTOR, custom_pose_extractor_factory
+import einops
 
 
 class HabitatViewDataset(Dataset):
@@ -105,9 +107,13 @@ class HabitatLocationDataset(Dataset):
     """
 
     def __init__(
-        self, habitat_view_ds: HabitatViewDataset, object_extraction_depth: float = 0.1
+        self,
+        habitat_view_ds: HabitatViewDataset,
+        object_extraction_depth: float = 0.5,
+        subsample_prob: float = 0.02,
     ):
         self.habitat_view_dataset = habitat_view_ds
+        self.subsample_prob = subsample_prob
         self.image_extractor = habitat_view_ds.image_extractor
         self.poses = self.image_extractor.poses
 
@@ -116,7 +122,65 @@ class HabitatLocationDataset(Dataset):
 
         self._extract_dataset()
 
+    def _get_intrinsics(self):
+        """
+        Returns the instrinsic matrix of the camera
+        :return: the intrinsic matrix (shape: :math:`[3, 3]`)
+        :rtype: np.ndarray
+        """
+        image_size_x, image_size_y = self.habitat_view_dataset.image_size
+        self.fx, self.fy, self.cx, self.cy = (
+            image_size_x // 2,
+            image_size_y // 2,
+            image_size_x // 2,
+            image_size_y // 2,
+        )
+        Itc = np.array([[self.fx, 0, self.cx], [0, self.fy, self.cy], [0, 0, 1]])
+        return Itc
+
+    def _convert_rgbd_to_world_coordinates(
+        self,
+        camera_position: np.ndarray,
+        camera_direction: quaternion.quaternion,
+        depth_map: np.ndarray,
+        subsampled_flat: np.ndarray,
+    ):
+        # First, calculate the world coordinates assuming camera is centered at 0 facing forward
+        image_size_x, image_size_y = self.habitat_view_dataset.image_size
+        grid_uv = np.meshgrid(np.arange(image_size_x), np.arange(image_size_y))
+        grid_uv = np.stack(grid_uv, axis=-1).astype(float)
+        grid_uv = einops.rearrange(grid_uv, "x y d -> (x y) d")[subsampled_flat]
+        # Assume depth view is perfect, so we don't need to do filtering as seen in
+        # https://github.com/facebookresearch/fairo/blob/main/droidlet/lowlevel/locobot/remote/remote_locobot.py#L100-L139
+        # Converted from
+        # https://gist.github.com/cbaus/6e04f7fe5355f67a90e99d7be0563e88#file-convert-py
+        xy_over_z = (
+            einops.rearrange(np.array([self.cx, self.cy]), "(x d) -> x d", x=1)
+            - grid_uv
+        )
+        xy_over_z /= einops.rearrange(np.array([self.fx, self.fy]), "(x d) -> x d", x=1)
+        depth_subsampled = einops.rearrange(depth_map.numpy(), "x y -> (x y)")[
+            subsampled_flat
+        ]
+        z = einops.repeat(depth_subsampled, "w -> w d", d=1) / np.sqrt(
+            1 + np.sum((xy_over_z**2), axis=-1, keepdims=True)
+        )
+        # Negative sign since "Front" is -z direction in pinhole camera notation.
+        xyz = -np.concatenate([xy_over_z * z, z], axis=-1)
+        # Now, rotate and translate this to find true world coordinates.
+        rotated_xyz = self._rotate_set_of_vectors_by_quat(camera_direction, xyz)
+        translated_xyz = rotated_xyz + camera_position
+        return translated_xyz
+
+    @staticmethod
+    def _rotate_set_of_vectors_by_quat(q: quaternion.quaternion, M: np.ndarray):
+        # Assume M has shape ... x 3
+        assert M.shape[-1] == 3
+        return M @ quaternion.as_rotation_matrix(q).T
+
     def _extract_dataset(self):
+        # Precompute the camera intrinsics from the view dataset.
+        self._get_intrinsics()
         # Itereate over the view dataset to extract all possible object tags.
         for idx in tqdm.trange(len(self.habitat_view_dataset)):
             data_dict = self.habitat_view_dataset[idx]
@@ -126,18 +190,29 @@ class HabitatLocationDataset(Dataset):
             )
             depth_map = data_dict["depth"]
             frame_size = depth_map.shape[0]  # Assuming depth map is a square image.
-            # Now, find out how far the center of the image is from depth map.
-            direction_vector = quat_rotate_vector(
-                q=quaternion.from_float_array(camera_dir), v=habitat_sim.geo.FRONT
+            # Only process a subsampled portion of the image.
+            subsampled = (
+                np.random.uniform(low=0.0, high=1.0, size=(frame_size, frame_size))
+                <= self.subsample_prob
             )
-            distance = depth_map[frame_size // 2, frame_size // 2].item()
-            xyz_loc = camera_pos + (direction_vector * distance) / np.linalg.norm(
-                direction_vector
+            subsampled_flat = einops.rearrange(subsampled, "x y -> (x y)")
+            # Now, convert everything to their world coordinates.
+            all_xyz = self._convert_rgbd_to_world_coordinates(
+                camera_pos,
+                quaternion.from_float_array(camera_dir),
+                depth_map,
+                subsampled_flat,
             )
-            self.coordinates.append(xyz_loc)
+            self.coordinates.append(all_xyz)
             self.semantic_label.append(
-                data_dict["truth"][frame_size // 2, frame_size // 2]
+                einops.rearrange(data_dict["truth"], "w h -> (w h)")[subsampled_flat]
             )
+
+        # Now combine everything in one array.
+        self.coordinates = torch.from_numpy(np.concatenate(self.coordinates, axis=0))
+        self.semantic_label = torch.from_numpy(
+            np.concatenate(self.semantic_label, axis=0)
+        )
 
     def __len__(self):
         return len(self.coordinates)
