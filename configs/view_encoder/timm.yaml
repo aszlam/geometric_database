@@ -4,6 +4,7 @@ view_shape:
   - ${image_size}
 timm_class: resnet18
 semantic_embedding_len: 16
-num_semantic_classes: 100
+# TODO Mahi figure out the true number of semantic classes.
+num_semantic_classes: 256
 device: ${device}
 representation_length: ${representation_dim}
