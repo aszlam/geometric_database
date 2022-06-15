@@ -1,7 +1,7 @@
 from typing import Iterable, List, Tuple, Union
 
 import torch
-import habitat_sim
+import json
 import numpy as np
 import tqdm
 import quaternion
@@ -59,6 +59,16 @@ class HabitatViewDataset(Dataset):
         # We will perform preprocessing transforms on the data
         self.transforms = transforms
 
+        # We need to deduplicate multiples of same object with different IDs.
+        self.instance_id_to_name = self.image_extractor.instance_id_to_name
+        # Load the canonical name to ID mapper.
+        self._name_to_id = {}
+        for obj in json.load(open("dataloaders/object_maps.json")):
+            self._name_to_id[obj["name"]] = obj["id"]
+        self.map_to_class_id = np.vectorize(
+            lambda x: self._name_to_id.get(self.instance_id_to_name.get(x, 0), 0)
+        )
+
     def __len__(self):
         return len(self.image_extractor)
 
@@ -67,12 +77,13 @@ class HabitatViewDataset(Dataset):
         # self.extractor.poses gives you the pose information
         # (both x y z and also quarternions)
         raw_semantic_output = sample["semantic"]
+        truth_mask = self.map_to_class_id(raw_semantic_output)
         pose_data = self.image_extractor.poses[idx]
         camera_pos, camera_direction, scene_fp = pose_data
 
         output = {
             "rgb": sample["rgba"],
-            "truth": raw_semantic_output.astype(int),
+            "truth": truth_mask.astype(int),
             "depth": sample["depth"],
             "camera_pos": np.array(camera_pos),
             "camera_direction": quaternion.as_float_array(camera_direction),
