@@ -2,7 +2,7 @@
 Given the representation of the point (x, y, z), decode what the semantic tag of that position
 should be.
 """
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Union
 import torch
 import torch.nn as nn
 
@@ -17,13 +17,18 @@ class SemanticOccupancyDecoder(AbstractDecoder):
         depth: int = 3,
         hidden_dim: int = 256,
         batchnorm: bool = True,
+        device: Union[str, torch.device] = "cuda",
     ):
         super().__init__()
         self._rep_length = representation_length
         self._depth = depth
         self._hidden_dim = hidden_dim
         self._batchnorm = batchnorm
+        self._device = device
 
+        # For this, we could later try to learn a contrastive loss.
+        # TODO mahi https://github.com/HobbitLong/SupContrast/blob/master/losses.py
+        # For now, we will just compute a classification loss
         self.loss = nn.CrossEntropyLoss()
 
     def register_embedding_map(self, embedding: nn.Embedding) -> None:
@@ -32,19 +37,21 @@ class SemanticOccupancyDecoder(AbstractDecoder):
         self.trunk = MLP(
             input_dim=self._rep_length,
             hidden_dim=self._hidden_dim,
-            output_dim=self._embedding.weight.shape[-1],
+            # TODO switch out this line when we are mapping everything to its own embedding
+            # vector instead of a one-hot vector for classification.
+            # output_dim=self._embedding.weight.shape[-1],
+            output_dim=self._embedding.weight.shape[0],
             hidden_depth=self._depth,
             batchnorm=self._batchnorm,
         )
+        self.trunk = self.trunk.to(self._device)
 
     def decode_representations(self, scene_model_reps: torch.Tensor) -> torch.Tensor:
         # We learn to extract the semantic tag of the position.
-        return self.trunk(scene_model_reps)
+        return self.trunk(scene_model_reps.squeeze(0))
 
     def compute_detailed_loss(
         self, decoded_representation: torch.Tensor, ground_truth: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        # For this, we could later try to learn a contrastive loss.
-        # TODO mahi https://github.com/HobbitLong/SupContrast/blob/master/losses.py
-        # For now, we will just compute a classification loss
-        return self.loss(decoded_representation, ground_truth)
+        occupancy_loss = self.loss(decoded_representation, ground_truth)
+        return occupancy_loss, dict(occupancy_loss=occupancy_loss)

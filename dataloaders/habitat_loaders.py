@@ -130,9 +130,14 @@ class HabitatLocationDataset(Dataset):
         object_extraction_depth: float = 0.5,
         subsample_prob: float = 0.02,
     ):
+        self.habitat_view_data = (
+            habitat_view_ds.dataset
+            if isinstance(habitat_view_ds, torch.utils.data.Subset)
+            else habitat_view_ds
+        )
         self.habitat_view_dataset = habitat_view_ds
         self.subsample_prob = subsample_prob
-        self.image_extractor = habitat_view_ds.image_extractor
+        self.image_extractor = self.habitat_view_data.image_extractor
         self.poses = self.image_extractor.poses
 
         self.coordinates = []
@@ -146,7 +151,7 @@ class HabitatLocationDataset(Dataset):
         :return: the intrinsic matrix (shape: :math:`[3, 3]`)
         :rtype: np.ndarray
         """
-        image_size_x, image_size_y = self.habitat_view_dataset.image_size
+        image_size_x, image_size_y = self.habitat_view_data.image_size
         self.fx, self.fy, self.cx, self.cy = (
             image_size_x // 2,
             image_size_y // 2,
@@ -164,7 +169,7 @@ class HabitatLocationDataset(Dataset):
         subsampled_flat: np.ndarray,
     ):
         # First, calculate the world coordinates assuming camera is centered at 0 facing forward
-        image_size_x, image_size_y = self.habitat_view_dataset.image_size
+        image_size_x, image_size_y = self.habitat_view_data.image_size
         grid_uv = np.meshgrid(np.arange(image_size_x), np.arange(image_size_y))
         grid_uv = np.stack(grid_uv, axis=-1).astype(float)
         grid_uv = einops.rearrange(grid_uv, "x y d -> (x y) d")[subsampled_flat]

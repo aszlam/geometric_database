@@ -1,4 +1,4 @@
-from typing import Dict, Union
+from typing import Dict, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -46,7 +46,7 @@ class SceneTransformer(nn.Module):
 
     def forward(
         self, view_dict: Dict[str, torch.Tensor], query_xyz: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Given a batch of views and a set of queries, this model will try to predict the
         semantic representation of the scene at position x y z.
@@ -57,6 +57,9 @@ class SceneTransformer(nn.Module):
             view_dict["camera_direction"].float()
         )
         encoded_query_xyz = self.query_xyz_encoder(query_xyz.float())
+
+        num_views = len(encoded_view_xyz)
+        num_queries = len(encoded_query_xyz)
 
         views = self.view_token + encoded_views + encoded_view_xyz + encoded_view_quat
         queries = self.query_token + encoded_query_xyz
@@ -70,8 +73,9 @@ class SceneTransformer(nn.Module):
         scene_tf_input = torch.cat([views, queries], dim=0).unsqueeze(
             0
         )  # Join along batch axis since scene_tf operates on sets anyway.
-        output = self.scene_model(scene_tf_input)
-        return output
+        output: torch.Tensor = self.scene_model(scene_tf_input)
+        assert output.size(1) == num_views + num_queries
+        return output[:, :num_views, ...], output[:, num_views:, ...]
         # TODO Mahi decide if we want to add the positional encoding at every intermediate
         # transformer layers anyway
         # TODO Also figure out the attention map between different inputs. For example, we

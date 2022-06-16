@@ -1,3 +1,5 @@
+import logging
+from sre_constants import GROUPREF_UNI_IGNORE
 from typing import Dict, List
 import torch
 import torch.nn as nn
@@ -5,12 +7,17 @@ import torch.nn.functional as F
 import hydra
 import tqdm
 
-from torch.utils.data import DataLoader
+from itertools import chain
+from torch.utils.data import DataLoader, random_split
 from omegaconf import DictConfig, OmegaConf
+from models.task_decoders.abstract_decoder import AbstractDecoder
 from models.view_encoders.abstract_view_encoder import AbstractViewEncoder
 from dataloaders.habitat_loaders import HabitatLocationDataset, HabitatViewDataset
 from models.scene_models.positional_encoding import PositionalEmbedding
 from models.scene_transformer import SceneTransformer
+
+
+logging.basicConfig(filename="training.log", level=logging.DEBUG)
 
 
 class Workspace:
@@ -45,52 +52,148 @@ class Workspace:
             )
             self.scene_transformers[scene_name] = current_scene_transformer
 
+        self.decoders: List[AbstractDecoder] = []
+        for decoder_cfg in [self.cfg.decoder]:
+            self.decoders.append(hydra.utils.instantiate(decoder_cfg))
+            self.decoders[-1].register_embedding_map(
+                self.habitat_view_encoder.semantic_embedding_layer
+            )
+
+        # Setup optimizers.
+        optimizable_params = [
+            self.habitat_view_encoder.parameters(),
+            self.view_quat_encoder.parameters(),
+            self.view_xyz_encoder.parameters(),
+            self.query_xyz_encoder.parameters(),
+        ]
+        for st in self.scene_transformers.values():
+            optimizable_params.append(st.parameters())
+        for decoder in self.decoders:
+            optimizable_params.append(decoder.parameters())
+        # self.optimizer: torch.optim.Optimizer = hydra.utils.instantiate(
+        #     config=self.cfg.optimizer,
+        #     params=chain(*optimizable_params),
+        # )
+        self.optimizer = torch.optim.Adam(
+            params=chain(*optimizable_params),
+            lr=1e-4,
+        )
+
+        self._setup_datasets()
+
+    def _setup_datasets(self):
         self.view_dataset: HabitatViewDataset = hydra.utils.instantiate(
             self.cfg.dataset.view_dataset
         )
-        self.xyz_dataset: HabitatLocationDataset = hydra.utils.instantiate(
-            self.cfg.dataset.xyz_dataset, habitat_view_ds=self.view_dataset
+        train_split_size = int(len(self.view_dataset) * self.cfg.train_split_size)
+        self.view_train_dataset, self.view_test_dataset = random_split(
+            self.view_dataset,
+            lengths=[train_split_size, len(self.view_dataset) - train_split_size],
+        )
+        self.xyz_train_dataset: HabitatLocationDataset = hydra.utils.instantiate(
+            self.cfg.dataset.xyz_dataset, habitat_view_ds=self.view_train_dataset
+        )
+        self.xyz_test_dataset: HabitatLocationDataset = hydra.utils.instantiate(
+            self.cfg.dataset.xyz_dataset, habitat_view_ds=self.view_test_dataset
         )
 
-        self.view_dataloader = DataLoader(
-            self.view_dataset,
+        self.view_train_dataloader = DataLoader(
+            self.view_train_dataset,
+            batch_size=self.cfg.batch_size,
+            # num_workers=self.cfg.num_workers,
+            shuffle=True,
+            pin_memory=True,
+        )
+
+        self.view_test_dataloader = DataLoader(
+            self.view_test_dataset,
             batch_size=self.cfg.batch_size,
             # num_workers=self.cfg.num_workers,
             pin_memory=True,
         )
-        self.xyz_dataloader = DataLoader(
-            self.xyz_dataset,
+
+        self.xyz_train_dataloader = DataLoader(
+            self.xyz_train_dataset,
+            shuffle=True,
+            batch_size=self.cfg.batch_size,
+            # num_workers=self.cfg.num_workers,
+            pin_memory=True,
+        )
+
+        self.xyz_test_dataloader = DataLoader(
+            self.xyz_test_dataset,
             batch_size=self.cfg.batch_size,
             # num_workers=self.cfg.num_workers,
             pin_memory=True,
         )
 
     def run(self):
-        for epoch in range(self.cfg.train_epochs):
-            self.train_epoch()
+        postfix_dict = {}
+        iterator = tqdm.trange(self.cfg.train_epochs)
+        for epoch in iterator:
+            postfix_dict["train_loss"] = self.train_epoch()
             if (epoch + 1) % self.cfg.eval_every == 0:
-                self.test_epoch()
+                postfix_dict["test_loss"] = self.test_epoch()
+            iterator.set_postfix(postfix_dict)
+            logging.info(str(postfix_dict))
 
-    def train_epoch(self):
+    def train_epoch(self) -> float:
+        avg_loss = 0
+        iters = 0
         for views, xyz in tqdm.tqdm(
-            zip(self.view_dataloader, self.xyz_dataloader),
-            total=len(self.view_dataloader),
+            zip(self.view_train_dataloader, self.xyz_train_dataloader),
+            total=len(self.view_train_dataloader),
         ):
+            self.optimizer.zero_grad(set_to_none=True)
             xyz_coordinates = xyz["xyz"].to(self.cfg.device)
             views_dict = {
                 k: v.to(self.cfg.device)
                 for k, v in views.items()
                 if k not in ["scene_name"]
             }
-            xyz_coordinates = xyz_coordinates.to(self.cfg.device)
-            encoded_query_response = self.scene_transformers[self.scene_names[0]](
-                views_dict, xyz_coordinates
-            )
-        print(encoded_query_response.shape)
-        # TODO: Decode and compute losses.
+            encoded_view, encoded_response = self.scene_transformers[
+                self.scene_names[0]
+            ](views_dict, xyz_coordinates)
+            total_loss = 0.0
+            for decoder in self.decoders:
+                ground_truth = xyz["label"].to(self.cfg.device)
+                decoded_response = decoder.decode_representations(encoded_response)
+                loss, loss_dict = decoder.compute_detailed_loss(
+                    decoded_response, ground_truth
+                )
+                total_loss += loss
 
-    def test_epoch(self):
-        print("TODO: Test")
+            avg_loss += total_loss.detach().cpu().item()
+            iters += len(xyz_coordinates)
+            total_loss.backward()
+            self.optimizer.step()
+        return avg_loss / iters
+
+    def test_epoch(self) -> float:
+        epoch_loss = 0
+        epoch_samples = 0
+        for views, xyz in zip(self.view_test_dataloader, self.xyz_test_dataloader):
+            with torch.no_grad():
+                xyz_coordinates = xyz["xyz"].to(self.cfg.device)
+                views_dict = {
+                    k: v.to(self.cfg.device)
+                    for k, v in views.items()
+                    if k not in ["scene_name"]
+                }
+                encoded_view, encoded_response = self.scene_transformers[
+                    self.scene_names[0]
+                ](views_dict, xyz_coordinates)
+                total_loss = 0.0
+                for decoder in self.decoders:
+                    ground_truth = xyz["label"].to(self.cfg.device)
+                    decoded_response = decoder.decode_representations(encoded_response)
+                    loss, loss_dict = decoder.compute_detailed_loss(
+                        decoded_response, ground_truth
+                    )
+                    total_loss += loss
+                epoch_loss += total_loss.detach().cpu().item()
+                epoch_samples += len(xyz_coordinates)
+        return epoch_loss / epoch_samples
 
 
 @hydra.main(version_base="1.2", config_path="configs", config_name="scene_model.yaml")
