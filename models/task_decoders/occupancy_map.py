@@ -50,8 +50,26 @@ class SemanticOccupancyDecoder(AbstractDecoder):
         # We learn to extract the semantic tag of the position.
         return self.trunk(scene_model_reps.squeeze(0))
 
+    @staticmethod
+    def _accuracy(output, target, topk=(1, 5)):
+        """Computes the precision@k for the specified values of k"""
+        maxk = max(topk)
+        batch_size = target.size(0)
+
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+        res = []
+        for k in topk:
+            correct_k = torch.flatten(correct[:k]).float().sum(0)
+            res.append(correct_k.mul_(100.0 / batch_size))
+        return res
+
     def compute_detailed_loss(
         self, decoded_representation: torch.Tensor, ground_truth: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         occupancy_loss = self.loss(decoded_representation, ground_truth)
-        return occupancy_loss, dict(occupancy_loss=occupancy_loss)
+        topk_accuracy = self._accuracy(decoded_representation, ground_truth)
+        return occupancy_loss, dict(
+            occupancy_loss=occupancy_loss, top1=topk_accuracy[0], top5=topk_accuracy[1]
+        )

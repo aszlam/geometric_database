@@ -9,6 +9,7 @@ view_dataset:
   image_size:
     - ${image_size}
     - ${image_size}
+  canonical_object_ids: true
 
 xyz_dataset:
   _target_: dataloaders.habitat_loaders.HabitatLocationDataset

@@ -1,11 +1,9 @@
 import logging
-from sre_constants import GROUPREF_UNI_IGNORE
 from typing import Dict, List
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import hydra
 import tqdm
+import wandb
 
 from itertools import chain
 from torch.utils.data import DataLoader, random_split
@@ -15,6 +13,7 @@ from models.view_encoders.abstract_view_encoder import AbstractViewEncoder
 from dataloaders.habitat_loaders import HabitatLocationDataset, HabitatViewDataset
 from models.scene_models.positional_encoding import PositionalEmbedding
 from models.scene_transformer import SceneTransformer
+from utils import cycle
 
 
 logging.basicConfig(filename="training.log", level=logging.DEBUG)
@@ -23,6 +22,8 @@ logging.basicConfig(filename="training.log", level=logging.DEBUG)
 class Workspace:
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
+        wandb.config = OmegaConf.to_container(cfg, resolve=True)
+        wandb.init(project=cfg.wandb.project, tags=cfg.wandb.tags)
 
         self.habitat_view_encoder: AbstractViewEncoder = hydra.utils.instantiate(
             self.cfg.view_encoder
@@ -100,7 +101,6 @@ class Workspace:
         self.view_train_dataloader = DataLoader(
             self.view_train_dataset,
             batch_size=self.cfg.batch_size,
-            # num_workers=self.cfg.num_workers,
             shuffle=True,
             pin_memory=True,
         )
@@ -108,22 +108,20 @@ class Workspace:
         self.view_test_dataloader = DataLoader(
             self.view_test_dataset,
             batch_size=self.cfg.batch_size,
-            # num_workers=self.cfg.num_workers,
             pin_memory=True,
         )
 
         self.xyz_train_dataloader = DataLoader(
             self.xyz_train_dataset,
             shuffle=True,
-            batch_size=self.cfg.batch_size,
-            # num_workers=self.cfg.num_workers,
+            batch_size=self.cfg.xyz_batch_size,
             pin_memory=True,
         )
 
         self.xyz_test_dataloader = DataLoader(
             self.xyz_test_dataset,
-            batch_size=self.cfg.batch_size,
-            # num_workers=self.cfg.num_workers,
+            shuffle=True,
+            batch_size=self.cfg.xyz_batch_size,
             pin_memory=True,
         )
 
@@ -141,8 +139,8 @@ class Workspace:
         avg_loss = 0
         iters = 0
         for views, xyz in tqdm.tqdm(
-            zip(self.view_train_dataloader, self.xyz_train_dataloader),
-            total=len(self.view_train_dataloader),
+            zip(cycle(self.view_train_dataloader), self.xyz_train_dataloader),
+            total=len(self.xyz_train_dataloader),
         ):
             self.optimizer.zero_grad(set_to_none=True)
             xyz_coordinates = xyz["xyz"].to(self.cfg.device)
@@ -161,12 +159,14 @@ class Workspace:
                 loss, loss_dict = decoder.compute_detailed_loss(
                     decoded_response, ground_truth
                 )
+                wandb.log({f"train/{k}": v for k, v in loss_dict.items()})
                 total_loss += loss
 
             avg_loss += total_loss.detach().cpu().item()
             iters += len(xyz_coordinates)
             total_loss.backward()
             self.optimizer.step()
+            wandb.log({f"train/avg_loss": avg_loss / iters})
         return avg_loss / iters
 
     def test_epoch(self) -> float:
@@ -190,9 +190,11 @@ class Workspace:
                     loss, loss_dict = decoder.compute_detailed_loss(
                         decoded_response, ground_truth
                     )
+                    wandb.log({f"test/{k}": v for k, v in loss_dict.items()})
                     total_loss += loss
                 epoch_loss += total_loss.detach().cpu().item()
                 epoch_samples += len(xyz_coordinates)
+        wandb.log({f"test/avg_loss": epoch_loss / epoch_samples})
         return epoch_loss / epoch_samples
 
 

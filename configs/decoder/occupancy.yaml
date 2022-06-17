@@ -1,6 +1,6 @@
 _target_: models.task_decoders.occupancy_map.SemanticOccupancyDecoder
 representation_length: ${representation_dim}
-depth: 3
+depth: 2
 hidden_dim: 128
 batchnorm: True
 device: ${device}
