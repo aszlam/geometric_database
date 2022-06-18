@@ -39,6 +39,7 @@ class HabitatViewDataset(Dataset):
         image_size: Iterable[int] = (512, 512),
         transforms=transforms.Compose([transforms.ToTensor()]),
         canonical_object_ids: bool = False,
+        canonical_names_path: str = "dataloaders/object_maps.json",
     ):
         # Sets the grid size and the height levels in the pose extractor
         custom_pose_extractor_factory(pose_extractor_grid_size, height_levels)
@@ -66,10 +67,14 @@ class HabitatViewDataset(Dataset):
             self.instance_id_to_name = self.image_extractor.instance_id_to_name
             # Load the canonical name to ID mapper.
             self._name_to_id = {}
-            for obj in json.load(open("dataloaders/object_maps.json")):
+            for obj in json.load(open(canonical_names_path)):
                 self._name_to_id[obj["name"]] = obj["id"]
+            self._instance_id_to_canonical_id = {
+                instance_id: self._name_to_id.get(name, 0)
+                for (instance_id, name) in self.instance_id_to_name.items()
+            }
             self.map_to_class_id = np.vectorize(
-                lambda x: self._name_to_id.get(self.instance_id_to_name.get(x, 0), 0)
+                lambda x: self._instance_id_to_canonical_id.get(x, 0)
             )
 
     def __len__(self):
@@ -142,6 +147,7 @@ class HabitatLocationDataset(Dataset):
 
         self.coordinates = []
         self.semantic_label = []
+        self.rgb_data = []
 
         self._extract_dataset()
 
@@ -177,17 +183,14 @@ class HabitatLocationDataset(Dataset):
         # https://github.com/facebookresearch/fairo/blob/main/droidlet/lowlevel/locobot/remote/remote_locobot.py#L100-L139
         # Converted from
         # https://gist.github.com/cbaus/6e04f7fe5355f67a90e99d7be0563e88#file-convert-py
-        xy_over_z = (
-            einops.rearrange(np.array([self.cx, self.cy]), "(x d) -> x d", x=1)
-            - grid_uv
+        xy_over_z = grid_uv - einops.rearrange(
+            np.array([self.cx, self.cy]), "(x d) -> x d", x=1
         )
         xy_over_z /= einops.rearrange(np.array([self.fx, self.fy]), "(x d) -> x d", x=1)
         depth_subsampled = einops.rearrange(depth_map.numpy(), "x y -> (x y)")[
             subsampled_flat
         ]
-        z = einops.repeat(depth_subsampled, "w -> w d", d=1) / np.sqrt(
-            1 + np.sum((xy_over_z**2), axis=-1, keepdims=True)
-        )
+        z = einops.repeat(depth_subsampled, "w -> w d", d=1)
         # Negative sign since "Front" is -z direction in pinhole camera notation.
         xyz = -np.concatenate([xy_over_z * z, z], axis=-1)
         # Now, rotate and translate this to find true world coordinates.
@@ -226,9 +229,13 @@ class HabitatLocationDataset(Dataset):
                 depth_map,
                 subsampled_flat,
             )
+            all_rgb = data_dict["rgb"][:3, ...]
             self.coordinates.append(all_xyz)
             self.semantic_label.append(
                 einops.rearrange(data_dict["truth"], "w h -> (w h)")[subsampled_flat]
+            )
+            self.rgb_data.append(
+                einops.rearrange(all_rgb, "d w h -> (w h) d")[subsampled_flat]
             )
 
         # Now combine everything in one array.
@@ -236,9 +243,14 @@ class HabitatLocationDataset(Dataset):
         self.semantic_label = torch.from_numpy(
             np.concatenate(self.semantic_label, axis=0)
         )
+        self.rgb_data = torch.from_numpy(np.concatenate(self.rgb_data, axis=0))
 
     def __len__(self):
         return len(self.coordinates)
 
     def __getitem__(self, idx):
-        return {"xyz": self.coordinates[idx], "label": self.semantic_label[idx]}
+        return {
+            "xyz": self.coordinates[idx],
+            "label": self.semantic_label[idx],
+            "rgb": self.rgb_data[idx],
+        }

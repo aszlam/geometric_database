@@ -21,11 +21,13 @@ class Feedforward(nn.Module):
         representation_dim: int,
         scene_model: MLP,
         device: Union[str, torch.device],
+        use_fourier_features: bool = False,
     ):
         super().__init__()
         self.scene_model = scene_model
         self.rep_dim = representation_dim
         # Send to device.
+        self.use_fourier_features = use_fourier_features
         self.scene_model = self.scene_model.to(device)
 
     def register_encoders(
@@ -37,7 +39,10 @@ class Feedforward(nn.Module):
     ) -> None:
         # This naive model ignores the view entirely, and just tries to predict
         # semantic label given XYZ.
-        pass
+        if self.use_fourier_features:
+            self.positional_encoder_query = positional_encoder_query
+        else:
+            self.positional_encoder_query = nn.Identity()
 
     def forward(
         self, view_dict: Dict[str, torch.Tensor], query_xyz: torch.Tensor
@@ -46,5 +51,5 @@ class Feedforward(nn.Module):
         Given a batch of views and a set of queries, this model will try to predict the
         semantic representation of the scene at position x y z.
         """
-        output: torch.Tensor = self.scene_model(query_xyz.float())
+        output: torch.Tensor = self.scene_model(self.positional_encoder_query(query_xyz.float()))
         return None, output

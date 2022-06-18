@@ -22,8 +22,9 @@ logging.basicConfig(filename="training.log", level=logging.DEBUG)
 class Workspace:
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
-        wandb.config = OmegaConf.to_container(cfg, resolve=True)
-        wandb.init(project=cfg.wandb.project, tags=cfg.wandb.tags)
+        config_dict = OmegaConf.to_container(cfg, resolve=True)
+        wandb.config = config_dict
+        wandb.init(project=cfg.wandb.project, tags=cfg.wandb.tags, config=config_dict)
 
         self.habitat_view_encoder: AbstractViewEncoder = hydra.utils.instantiate(
             self.cfg.view_encoder
