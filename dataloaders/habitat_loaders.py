@@ -5,8 +5,8 @@ import json
 import numpy as np
 import tqdm
 import quaternion
-from habitat_sim.utils.common import quat_rotate_vector
 from habitat_sim.utils.data import ImageExtractor
+from habitat_sim.agent.agent import AgentState
 from torch.utils.data import Dataset
 from torchvision import transforms
 from utils.habitat_utils import CUSTOM_POSE_EXTRACTOR, custom_pose_extractor_factory
@@ -91,7 +91,17 @@ class HabitatViewDataset(Dataset):
             else raw_semantic_output
         )
         pose_data = self.image_extractor.poses[idx]
-        camera_pos, camera_direction, scene_fp = pose_data
+        agent_pos, agent_direction, scene_fp = pose_data
+        # Now use habitat sim to figure out sensor pos and direction.
+        new_state = AgentState()
+        new_state.position = agent_pos
+        new_state.rotation = agent_direction
+        self.image_extractor.sim.agents[0].set_state(new_state)
+        full_state = self.image_extractor.sim.agents[0].get_state()
+        # Extract camera state now.
+        camera_state = full_state.sensor_states["depth_sensor"]
+        camera_pos: np.ndarray = camera_state.position
+        camera_direction: quaternion.quaternion = camera_state.rotation
 
         output = {
             "rgb": sample["rgba"],
@@ -99,6 +109,8 @@ class HabitatViewDataset(Dataset):
             "depth": sample["depth"],
             "camera_pos": np.array(camera_pos),
             "camera_direction": quaternion.as_float_array(camera_direction),
+            "agent_pos": np.array(agent_pos),
+            "agent_direction": quaternion.as_float_array(agent_direction),
             "scene_name": scene_fp,
         }
 
@@ -172,37 +184,27 @@ class HabitatLocationDataset(Dataset):
         camera_position: np.ndarray,
         camera_direction: quaternion.quaternion,
         depth_map: np.ndarray,
-        subsampled_flat: np.ndarray,
     ):
-        # First, calculate the world coordinates assuming camera is centered at 0 facing forward
+        # Adapted from https://aihabitat.org/docs/habitat-lab/view-transform-warp.html
         image_size_x, image_size_y = self.habitat_view_data.image_size
-        grid_uv = np.meshgrid(np.arange(image_size_x), np.arange(image_size_y))
-        grid_uv = np.stack(grid_uv, axis=-1).astype(float)
-        grid_uv = einops.rearrange(grid_uv, "x y d -> (x y) d")[subsampled_flat]
-        # Assume depth view is perfect, so we don't need to do filtering as seen in
-        # https://github.com/facebookresearch/fairo/blob/main/droidlet/lowlevel/locobot/remote/remote_locobot.py#L100-L139
-        # Converted from
-        # https://gist.github.com/cbaus/6e04f7fe5355f67a90e99d7be0563e88#file-convert-py
-        xy_over_z = grid_uv - einops.rearrange(
-            np.array([self.cx, self.cy]), "(x d) -> x d", x=1
+        xs, ys = np.meshgrid(
+            np.linspace(-1, 1, image_size_x), np.linspace(1, -1, image_size_y)
         )
-        xy_over_z /= einops.rearrange(np.array([self.fx, self.fy]), "(x d) -> x d", x=1)
-        depth_subsampled = einops.rearrange(depth_map.numpy(), "x y -> (x y)")[
-            subsampled_flat
-        ]
-        z = einops.repeat(depth_subsampled, "w -> w d", d=1)
-        # Negative sign since "Front" is -z direction in pinhole camera notation.
-        xyz = -np.concatenate([xy_over_z * z, z], axis=-1)
-        # Now, rotate and translate this to find true world coordinates.
-        rotated_xyz = self._rotate_set_of_vectors_by_quat(camera_direction, xyz)
-        translated_xyz = rotated_xyz + camera_position
-        return translated_xyz
+        xs = xs.reshape(1, image_size_x, image_size_y)
+        ys = ys.reshape(1, image_size_x, image_size_y)
+        z = depth_map.numpy().reshape(1, image_size_x, image_size_y)
+        xyz_one = np.vstack((xs * z, ys * z, -z, np.ones_like(z)))
+        xyz_one = xyz_one.reshape(4, -1)
 
-    @staticmethod
-    def _rotate_set_of_vectors_by_quat(q: quaternion.quaternion, M: np.ndarray):
-        # Assume M has shape ... x 3
-        assert M.shape[-1] == 3
-        return M @ quaternion.as_rotation_matrix(q).T
+        # Now create the camera-to-world matrix.
+        T_world_camera = np.eye(4)
+        T_world_camera[0:3, 3] = camera_position
+        camera_rotation = quaternion.as_rotation_matrix(camera_direction)
+        T_world_camera[0:3, 0:3] = camera_rotation
+
+        xyz_world = np.matmul(T_world_camera, xyz_one)
+        xyz_world = xyz_world[:3, :]
+        return xyz_world.T
 
     def _extract_dataset(self):
         # Precompute the camera intrinsics from the view dataset.
@@ -218,24 +220,20 @@ class HabitatLocationDataset(Dataset):
             frame_size = depth_map.shape[0]  # Assuming depth map is a square image.
             # Only process a subsampled portion of the image.
             subsampled = (
-                np.random.uniform(low=0.0, high=1.0, size=(frame_size, frame_size))
+                np.random.uniform(low=0.0, high=1.0, size=(frame_size * frame_size))
                 <= self.subsample_prob
             )
-            subsampled_flat = einops.rearrange(subsampled, "x y -> (x y)")
             # Now, convert everything to their world coordinates.
             all_xyz = self._convert_rgbd_to_world_coordinates(
-                camera_pos,
-                quaternion.from_float_array(camera_dir),
-                depth_map,
-                subsampled_flat,
+                camera_pos, quaternion.from_float_array(camera_dir), depth_map
             )
             all_rgb = data_dict["rgb"][:3, ...]
-            self.coordinates.append(all_xyz)
+            self.coordinates.append(all_xyz[subsampled])
             self.semantic_label.append(
-                einops.rearrange(data_dict["truth"], "w h -> (w h)")[subsampled_flat]
+                einops.rearrange(data_dict["truth"], "w h -> (w h)")[subsampled]
             )
             self.rgb_data.append(
-                einops.rearrange(all_rgb, "d w h -> (w h) d")[subsampled_flat]
+                einops.rearrange(all_rgb, "d w h -> (w h) d")[subsampled]
             )
 
         # Now combine everything in one array.

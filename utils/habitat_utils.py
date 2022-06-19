@@ -111,7 +111,6 @@ def custom_pose_extractor_factory(grid_subdivision_size=50, height_grids=0):
                         ]
                     )
                     cam_normal = new_cpi - new_pos
-                    print(new_pos, cam_normal)
                     new_rot = self._compute_quat(cam_normal)
                     if np.isnan(new_rot).any():
                         # Sometimes the _compute_quat function messes up, so we skip over
