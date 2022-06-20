@@ -32,7 +32,7 @@ extractor = ImageExtractor(
 
 # Use the list of train outputs instead of the default, which is the full list
 # of outputs (test + train)
-extractor.set_mode('train')
+extractor.set_mode("train")
 
 # Index in to the extractor like a normal python list
 sample = extractor[0]

@@ -1,0 +1,12 @@
+scene_transformer:
+  _target_: models.basic_feedforward.Feedforward
+  representation_dim: ${representation_dim}
+  device: ${device}
+  use_fourier_features: True
+  scene_model:
+    _target_: utils.mlp.MLP
+    input_dim: ${representation_dim}
+    hidden_dim: 512
+    output_dim: ${representation_dim}
+    hidden_depth: 3
+    batchnorm: True

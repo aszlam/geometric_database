@@ -1,0 +1,41 @@
+defaults:
+  - _self_
+  - view_encoder: timm
+  - scene_model: transformer
+  - dataset: habitat
+  - decoder: occupancy
+
+optimizer:
+  _target_: torch.optim.Adam
+  lr: 1e-4
+  betas:
+    - 0.9
+    - 0.999
+
+wandb:
+  project: scene_transformer
+  tags:
+    - full_transformer
+
+image_size: 224
+device: cuda
+representation_dim: 256
+batch_size: 64
+xyz_batch_size: 448
+num_workers: 0
+train_epochs: 100
+eval_every: 1
+train_split_size: 0.5
+
+
+positional_encoder_xyz:
+  _target_: models.scene_models.positional_encoding.PositionalEmbedding
+  coordinate_dim: 3
+  representation_dim: ${representation_dim}
+  device: ${device}
+
+positional_encoder_quat:
+  _target_: models.scene_models.positional_encoding.PositionalEmbedding
+  coordinate_dim: 4
+  representation_dim: ${representation_dim}
+  device: ${device}

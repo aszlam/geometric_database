@@ -1,1 +1,2 @@
 timm==0.5.4
+hydra-core==1.2.0

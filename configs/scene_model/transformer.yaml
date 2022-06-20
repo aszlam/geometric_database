@@ -1,0 +1,13 @@
+scene_transformer:
+  _target_: models.scene_transformer.SceneTransformer
+  representation_dim: ${representation_dim}
+  device: ${device}
+  scene_model:
+    _target_: models.scene_models.transformers.Transformer
+    dim: ${representation_dim}
+    depth: 3
+    heads: 8
+    dim_heads: 16
+    mlp_dim: 256
+    dropout: 0.2
+    device: ${device}
