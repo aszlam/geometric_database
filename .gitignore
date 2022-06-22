@@ -3,3 +3,7 @@ notebooks
 outputs
 wandb
 training.log
+
+# Slurm files
+run_slurm.sbatch
+wrapper.sh

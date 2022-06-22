@@ -1,2 +1,7 @@
 timm==0.5.4
 hydra-core==1.2.0
+git+https://github.com/openai/CLIP.git
+ftfy==6.1.1
+regex==2022.6.2
+tqdm==4.64.0
+point-transformer-pytorch==0.1.5
