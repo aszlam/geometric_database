@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from models.scene_models.transformers import Transformer
 from models.scene_models.positional_encoding import PositionalEmbedding
 from models.view_encoders.abstract_view_encoder import AbstractViewEncoder
+import utils
 
 
 class SceneTransformer(nn.Module):
@@ -18,6 +19,7 @@ class SceneTransformer(nn.Module):
         representation_dim: int,
         scene_model: Transformer,
         device: Union[str, torch.device],
+        mask_prob: float = 0.2,
     ):
         super().__init__()
         self.scene_model = scene_model
@@ -26,10 +28,20 @@ class SceneTransformer(nn.Module):
         self.view_token = nn.parameter.Parameter(data=torch.randn(self.rep_dim))
         self.query_token = nn.parameter.Parameter(data=torch.randn(self.rep_dim))
 
+        self.xyz_position_mask = nn.parameter.Parameter(data=torch.randn(self.rep_dim))
+        self.view_position_mask = nn.parameter.Parameter(data=torch.randn(self.rep_dim))
+        self.view_direction_mask = nn.parameter.Parameter(
+            data=torch.randn(self.rep_dim)
+        )
+
         # Send to device.
         self.scene_model = self.scene_model.to(device)
         self.view_token.data = self.view_token.data.to(device)
         self.query_token.data = self.query_token.data.to(device)
+        self.xyz_position_mask.data = self.query_token.data.to(device)
+        self.view_position_mask.data = self.query_token.data.to(device)
+        self.view_direction_mask.data = self.query_token.data.to(device)
+        self.mask_prob = mask_prob
 
     def register_encoders(
         self,
@@ -45,23 +57,53 @@ class SceneTransformer(nn.Module):
         self.view_encoder = view_encoder
 
     def forward(
-        self, view_dict: Dict[str, torch.Tensor], query_xyz: torch.Tensor
+        self,
+        view_dict: Dict[str, torch.Tensor],
+        query_xyz: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Given a batch of views and a set of queries, this model will try to predict the
         semantic representation of the scene at position x y z.
         """
-        encoded_views = self.view_encoder(view_dict)
+        # First, figure out how to mask each axis.
+        to_mask = ["rgb", "truth", "depth", "camera_pos", "camera_direction"]
+        masked_dict = {}
+        for key in to_mask:
+            masked_dict[key] = utils.generate_batch_mask(
+                batch_size=len(view_dict[key]), masking_prob=self.mask_prob
+            ).to(view_dict[key].device)
+        encoded_views = self.view_encoder(view_dict, masked_dict)
+
+        # Now, replace the view XYZ/quat with masks.
         encoded_view_xyz = self.view_xyz_encoder(view_dict["camera_pos"].float())
         encoded_view_quat = self.view_quat_encoder(
             view_dict["camera_direction"].float()
+        )
+        masked_encoded_view_xyz = utils.mask_batch_with_mask_token(
+            encoded_view_xyz,
+            mask_token=self.view_position_mask,
+            batch_mask_indices=utils.generate_batch_mask(
+                len(view_dict["camera_pos"]), masking_prob=self.mask_prob
+            ),
+        )
+        masked_encoded_view_quat = utils.mask_batch_with_mask_token(
+            encoded_view_quat,
+            mask_token=self.view_direction_mask,
+            batch_mask_indices=utils.generate_batch_mask(
+                len(view_dict["camera_direction"]), masking_prob=self.mask_prob
+            ),
         )
         encoded_query_xyz = self.query_xyz_encoder(query_xyz.float())
 
         num_views = len(encoded_view_xyz)
         num_queries = len(encoded_query_xyz)
 
-        views = self.view_token + encoded_views + encoded_view_xyz + encoded_view_quat
+        views = (
+            self.view_token
+            + encoded_views
+            + masked_encoded_view_xyz
+            + masked_encoded_view_quat
+        )
         queries = self.query_token + encoded_query_xyz
         # Right now, in the transformer, there is a batch and there is a sequence.
         # We do not make a distinction right now, and just use the batch_size as 1

@@ -20,7 +20,7 @@ wandb:
 image_size: 224
 device: cuda
 representation_dim: 256
-batch_size: 128
+batch_size: 64
 xyz_batch_size: 128
 num_workers: 0
 train_epochs: 100

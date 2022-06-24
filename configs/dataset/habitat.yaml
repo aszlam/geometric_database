@@ -14,4 +14,4 @@ view_dataset:
 xyz_dataset:
   _target_: dataloaders.habitat_loaders.HabitatLocationDataset
   habitat_view_ds: ???  # Filled in with view dataset in runtime.
-  subsample_prob: 2e-2
+  subsample_prob: 2e-4
