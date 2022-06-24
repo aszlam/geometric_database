@@ -145,20 +145,24 @@ class Workspace:
         ):
             self.optimizer.zero_grad(set_to_none=True)
             xyz_coordinates = xyz["xyz"].to(self.cfg.device)
-            views_dict = {
-                k: v.to(self.cfg.device)
-                for k, v in views.items()
-                if k not in ["scene_name"]
-            }
+            views_dict, xyz_dict = (
+                {
+                    k: v.to(self.cfg.device)
+                    for k, v in data.items()
+                    if k not in ["scene_name"]
+                }
+                for data in (views, xyz)
+            )
             encoded_view, encoded_response = self.scene_transformers[
                 self.scene_names[0]
             ](views_dict, xyz_coordinates)
             total_loss = 0.0
             for decoder in self.decoders:
-                ground_truth = xyz["label"].to(self.cfg.device)
-                decoded_response = decoder.decode_representations(encoded_response)
+                decoded_view, decoded_response = decoder.decode_representations(
+                    encoded_view, encoded_response
+                )
                 loss, loss_dict = decoder.compute_detailed_loss(
-                    decoded_response, ground_truth
+                    decoded_view, decoded_response, ground_truth=(views_dict, xyz_dict)
                 )
                 wandb.log({f"train/{k}": v for k, v in loss_dict.items()})
                 total_loss += loss
@@ -175,21 +179,23 @@ class Workspace:
         epoch_samples = 0
         for views, xyz in zip(self.view_test_dataloader, self.xyz_test_dataloader):
             with torch.no_grad():
-                xyz_coordinates = xyz["xyz"].to(self.cfg.device)
                 views_dict = {
                     k: v.to(self.cfg.device)
                     for k, v in views.items()
                     if k not in ["scene_name"]
                 }
+                xyz_dict = {k: v.to(self.cfg.device) for k, v in xyz.items()}
+                xyz_coordinates = xyz_dict["xyz"]
                 encoded_view, encoded_response = self.scene_transformers[
                     self.scene_names[0]
                 ](views_dict, xyz_coordinates)
                 total_loss = 0.0
                 for decoder in self.decoders:
-                    ground_truth = xyz["label"].to(self.cfg.device)
-                    decoded_response = decoder.decode_representations(encoded_response)
+                    decoded_view, decoded_response = decoder.decode_representations(
+                        encoded_view, encoded_response
+                    )
                     loss, loss_dict = decoder.compute_detailed_loss(
-                        decoded_response, ground_truth
+                        decoded_view, decoded_response, ground_truth=(views_dict, xyz_dict)
                     )
                     wandb.log({f"test/{k}": v for k, v in loss_dict.items()})
                     total_loss += loss

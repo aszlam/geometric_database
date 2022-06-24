@@ -1,0 +1,6 @@
+_target_: models.task_decoders.pixel_location.PixelLocationDecoder
+representation_length: ${representation_dim}
+depth: 2
+hidden_dim: 256
+batchnorm: True
+device: ${device}

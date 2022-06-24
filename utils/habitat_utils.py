@@ -1,11 +1,15 @@
+from threading import local
 from typing import List, Tuple
-from quaternion import quaternion
+import einops
+from quaternion import quaternion, as_rotation_matrix
 import numpy as np
 import habitat_sim.registry as registry
 
 from habitat_sim.utils.data import PoseExtractor
 from itertools import product
 import logging
+
+import torch
 
 
 CUSTOM_POSE_EXTRACTOR = "3d_pose_extract"
@@ -126,3 +130,52 @@ def custom_pose_extractor_factory(grid_subdivision_size=50, height_grids=0):
             logging.debug("Camera poses found: {}".format(len(new_poses)))
 
             return new_poses
+
+
+def local_to_global_xyz(
+    local_positions: torch.Tensor,
+    camera_position: torch.Tensor,
+    camera_direction_matrix: torch.Tensor,
+):
+    # Assume everything exists on matrices that are batched up, and we want to operate on them.
+    batch_size = local_positions.size(0)
+    camera_matrix = torch.zeros(batch_size, 4, 4)
+    camera_matrix[:, 0:3, 0:3] = camera_direction_matrix
+    camera_matrix[:, 0:3, -1] = camera_position
+    camera_matrix[:, -1, -1] = 1
+
+    local_positions_one = torch.concat(
+        (local_positions, torch.ones(local_positions.shape[:-1] + (1,))), dim=-1
+    )
+
+    rearranged_local_xyz = einops.rearrange(local_positions_one, "b n four -> b four n")
+    global_positions = torch.bmm(local_positions_one, rearranged_local_xyz)
+    return einops.rearrange(global_positions, "b four n -> b n four")[:, :, :-3]
+
+
+def depth_and_camera_to_global_xyz(
+    image_sizes: Tuple[int, int],
+    depth_map: np.ndarray,
+    camera_position: np.ndarray,
+    camera_direction: quaternion,
+) -> np.ndarray:
+    # Adapted from https://aihabitat.org/docs/habitat-lab/view-transform-warp.html
+    image_size_x, image_size_y = image_sizes
+    xs, ys = np.meshgrid(
+        np.linspace(-1, 1, image_size_x), np.linspace(1, -1, image_size_y)
+    )
+    xs = xs.reshape(1, image_size_x, image_size_y)
+    ys = ys.reshape(1, image_size_x, image_size_y)
+    z = depth_map.reshape(1, image_size_x, image_size_y)
+    xyz_one = np.vstack((xs * z, ys * z, -z, np.ones_like(z)))
+    xyz_one = xyz_one.reshape(4, -1)
+
+    # Now create the camera-to-world matrix.
+    T_world_camera = np.eye(4)
+    T_world_camera[0:3, 3] = camera_position
+    camera_rotation = as_rotation_matrix(camera_direction)
+    T_world_camera[0:3, 0:3] = camera_rotation
+
+    xyz_world = np.matmul(T_world_camera, xyz_one)
+    xyz_world = xyz_world[:3, :]
+    return xyz_world.T

@@ -1,6 +1,11 @@
+from typing import Callable, Union
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from utils.pointnet2_utils import PointNetSetAbstraction, PointNetFeaturePropagation
+from models.view_encoders.channel_encoders.depth.abstract_depth_encoder import (
+    AbstractDepthEncoder,
+)
 
 
 class get_model(nn.Module):
@@ -50,6 +55,52 @@ class get_loss(nn.Module):
         total_loss = F.nll_loss(pred, target, weight=weight)
 
         return total_loss
+
+
+class Pointnet2DepthEncoder(AbstractDepthEncoder):
+    def __init__(
+        self,
+        representation_dim: int,
+        device: Union[str, torch.device],
+        accumulate_operation: Callable = lambda x: torch.mean(x, dim=-2, keepdim=False),
+        load_saved_model: bool = False,
+        model_path: str = "",
+        *args,
+        **kwargs
+    ):
+        super().__init__()
+        self.representation_dim = representation_dim
+        self.pointnet_model = get_model(13)
+        # Now load the model first.
+        if load_saved_model:
+            model_weights = torch.load(model_path)
+            self.pointnet_model.load_state_dict(model_weights["model_state_dict"])
+            self.pointnet_model.to(device)
+            self.pointnet_model.requires_grad_(False)
+        # Now replace the last conv layer.
+        self.pointnet_model.conv2 = nn.Conv1d(128, representation_dim, 1)
+        self.pointnet_model.conv2.requires_grad_(True)
+        self.device = device
+
+        self.accumulate_operation = accumulate_operation
+
+    def to(self, device: Union[str, torch.device]) -> AbstractDepthEncoder:
+        model = self.pointnet_model.to(device)
+        model.requires_grad_(False)
+        model.conv2.requires_grad_(True)
+        self.pointnet_model = model
+        self.device = device
+        return self
+
+    def encode_view(
+        self, depth_view: torch.Tensor, rgb_view: torch.Tensor
+    ) -> torch.Tensor:
+        preprocessed_result = super().preprocess_view(
+            depth_view=depth_view, rgb_data=rgb_view
+        )
+        per_point_rep = self.pointnet_model(preprocessed_result)
+        # Now accumulate the per-point representations.
+        return self.accumulate_operation(per_point_rep)
 
 
 if __name__ == "__main__":

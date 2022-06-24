@@ -9,7 +9,11 @@ from habitat_sim.utils.data import ImageExtractor
 from habitat_sim.agent.agent import AgentState
 from torch.utils.data import Dataset
 from torchvision import transforms
-from utils.habitat_utils import CUSTOM_POSE_EXTRACTOR, custom_pose_extractor_factory
+from utils.habitat_utils import (
+    CUSTOM_POSE_EXTRACTOR,
+    custom_pose_extractor_factory,
+    depth_and_camera_to_global_xyz,
+)
 import einops
 
 
@@ -102,6 +106,7 @@ class HabitatViewDataset(Dataset):
         camera_state = full_state.sensor_states["depth_sensor"]
         camera_pos: np.ndarray = camera_state.position
         camera_direction: quaternion.quaternion = camera_state.rotation
+        depth_shape = sample["depth"].shape
 
         output = {
             "rgb": sample["rgba"],
@@ -109,8 +114,15 @@ class HabitatViewDataset(Dataset):
             "depth": sample["depth"],
             "camera_pos": np.array(camera_pos),
             "camera_direction": quaternion.as_float_array(camera_direction),
+            "camera_direction_matrix": quaternion.as_rotation_matrix(camera_direction),
             "agent_pos": np.array(agent_pos),
             "agent_direction": quaternion.as_float_array(agent_direction),
+            "xyz_position": depth_and_camera_to_global_xyz(
+                image_sizes=depth_shape,
+                depth_map=sample["depth"],
+                camera_position=np.array(camera_pos),
+                camera_direction=camera_direction,
+            ),
             "scene_name": scene_fp,
         }
 
@@ -118,7 +130,13 @@ class HabitatViewDataset(Dataset):
             output["rgb"] = self.transforms(output["rgb"])
             output["truth"] = self.transforms(output["truth"]).squeeze(0)
             output["depth"] = self.transforms(output["depth"]).squeeze(0)
+            output["xyz_position"] = self.transforms(output["xyz_position"]).squeeze(0)
 
+        output["xyz_position"] = einops.rearrange(
+            output["xyz_position"],
+            "(w h) d -> d w h",
+            w=depth_shape[0],
+        )
         return output
 
 
@@ -135,9 +153,9 @@ class HabitatLocationDataset(Dataset):
 
     Parameters:
     habitat_view_dataset: a view dataset constructed already that we can iterate over and
+    every object_extarction_depth length, we add a new point to the x y z dataloader saying
     find object semantic ids as well as their positions.
     object_extraction_depth: along the ray between the camera pose and where it hits the wall
-    every object_extarction_depth length, we add a new point to the x y z dataloader saying
     it is empty.
     """
 
@@ -179,43 +197,12 @@ class HabitatLocationDataset(Dataset):
         Itc = np.array([[self.fx, 0, self.cx], [0, self.fy, self.cy], [0, 0, 1]])
         return Itc
 
-    def _convert_rgbd_to_world_coordinates(
-        self,
-        camera_position: np.ndarray,
-        camera_direction: quaternion.quaternion,
-        depth_map: np.ndarray,
-    ):
-        # Adapted from https://aihabitat.org/docs/habitat-lab/view-transform-warp.html
-        image_size_x, image_size_y = self.habitat_view_data.image_size
-        xs, ys = np.meshgrid(
-            np.linspace(-1, 1, image_size_x), np.linspace(1, -1, image_size_y)
-        )
-        xs = xs.reshape(1, image_size_x, image_size_y)
-        ys = ys.reshape(1, image_size_x, image_size_y)
-        z = depth_map.numpy().reshape(1, image_size_x, image_size_y)
-        xyz_one = np.vstack((xs * z, ys * z, -z, np.ones_like(z)))
-        xyz_one = xyz_one.reshape(4, -1)
-
-        # Now create the camera-to-world matrix.
-        T_world_camera = np.eye(4)
-        T_world_camera[0:3, 3] = camera_position
-        camera_rotation = quaternion.as_rotation_matrix(camera_direction)
-        T_world_camera[0:3, 0:3] = camera_rotation
-
-        xyz_world = np.matmul(T_world_camera, xyz_one)
-        xyz_world = xyz_world[:3, :]
-        return xyz_world.T
-
     def _extract_dataset(self):
         # Precompute the camera intrinsics from the view dataset.
         self._get_intrinsics()
         # Itereate over the view dataset to extract all possible object tags.
         for idx in tqdm.trange(len(self.habitat_view_dataset)):
             data_dict = self.habitat_view_dataset[idx]
-            camera_pos, camera_dir = (
-                data_dict["camera_pos"],
-                data_dict["camera_direction"],
-            )
             depth_map = data_dict["depth"]
             frame_size = depth_map.shape[0]  # Assuming depth map is a square image.
             # Only process a subsampled portion of the image.
@@ -224,11 +211,11 @@ class HabitatLocationDataset(Dataset):
                 <= self.subsample_prob
             )
             # Now, convert everything to their world coordinates.
-            all_xyz = self._convert_rgbd_to_world_coordinates(
-                camera_pos, quaternion.from_float_array(camera_dir), depth_map
+            all_xyz: np.ndarray = data_dict["xyz_position"]
+            all_rgb: np.ndarray = data_dict["rgb"][:3, ...]
+            self.coordinates.append(
+                einops.rearrange(all_xyz, "d w h -> (w h) d")[subsampled]
             )
-            all_rgb = data_dict["rgb"][:3, ...]
-            self.coordinates.append(all_xyz[subsampled])
             self.semantic_label.append(
                 einops.rearrange(data_dict["truth"], "w h -> (w h)")[subsampled]
             )

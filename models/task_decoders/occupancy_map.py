@@ -46,9 +46,11 @@ class SemanticOccupancyDecoder(AbstractDecoder):
         )
         self.trunk = self.trunk.to(self._device)
 
-    def decode_representations(self, scene_model_reps: torch.Tensor) -> torch.Tensor:
+    def decode_representations(
+        self, encoded_views: torch.Tensor, scene_model_reps: torch.Tensor
+    ) -> torch.Tensor:
         # We learn to extract the semantic tag of the position.
-        return self.trunk(scene_model_reps.squeeze(0))
+        return encoded_views, self.trunk(scene_model_reps.squeeze(0))
 
     @staticmethod
     def _accuracy(output, target, topk=(1, 5)):
@@ -66,10 +68,15 @@ class SemanticOccupancyDecoder(AbstractDecoder):
         return res
 
     def compute_detailed_loss(
-        self, decoded_representation: torch.Tensor, ground_truth: torch.Tensor
+        self,
+        decoded_view_representation: torch.Tensor,
+        decoded_representation: torch.Tensor,
+        ground_truth: Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]],
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        occupancy_loss = self.loss(decoded_representation, ground_truth)
-        topk_accuracy = self._accuracy(decoded_representation, ground_truth)
+        _ = decoded_view_representation
+        ground_truth_labels = ground_truth[1]["label"]
+        occupancy_loss = self.loss(decoded_representation, ground_truth_labels)
+        topk_accuracy = self._accuracy(decoded_representation, ground_truth_labels)
         return occupancy_loss, dict(
             occupancy_loss=occupancy_loss, top1=topk_accuracy[0], top5=topk_accuracy[1]
         )
