@@ -132,7 +132,10 @@ class Workspace:
         for epoch in iterator:
             postfix_dict["train_loss"] = self.train_epoch()
             if (epoch + 1) % self.cfg.eval_every == 0:
-                postfix_dict["test_loss"] = self.test_epoch()
+                save_data = (self.cfg.train_epochs - epoch) <= self.cfg.eval_every
+                postfix_dict["test_loss"] = self.test_epoch(
+                    save_decoded_results=save_data
+                )
             iterator.set_postfix(postfix_dict)
             logging.info(str(postfix_dict))
 
@@ -174,9 +177,11 @@ class Workspace:
             wandb.log({f"train/avg_loss": avg_loss / iters})
         return avg_loss / iters
 
-    def test_epoch(self) -> float:
+    def test_epoch(self, save_decoded_results: bool = True) -> float:
         epoch_loss = 0
         epoch_samples = 0
+        if save_decoded_results:
+            decoded_views, decoded_responses = [], []
         for views, xyz in zip(self.view_test_dataloader, self.xyz_test_dataloader):
             with torch.no_grad():
                 views_dict = {
@@ -195,13 +200,26 @@ class Workspace:
                         encoded_view, encoded_response
                     )
                     loss, loss_dict = decoder.compute_detailed_loss(
-                        decoded_view, decoded_response, ground_truth=(views_dict, xyz_dict)
+                        decoded_view,
+                        decoded_response,
+                        ground_truth=(views_dict, xyz_dict),
                     )
+                    if save_decoded_results:
+                        decoded_views.append(decoded_view.detach().cpu())
+                        decoded_responses.append(decoded_response.detach().cpu())
                     wandb.log({f"test/{k}": v for k, v in loss_dict.items()})
                     total_loss += loss
                 epoch_loss += total_loss.detach().cpu().item()
                 epoch_samples += len(xyz_coordinates)
         wandb.log({f"test/avg_loss": epoch_loss / epoch_samples})
+        if save_decoded_results:
+            torch.save(
+                torch.cat(decoded_views), f"{self.cfg.save_path}/decoded_views.pt"
+            )
+            torch.save(
+                torch.cat(decoded_responses),
+                f"{self.cfg.save_path}/decoded_responses.pt",
+            )
         return epoch_loss / epoch_samples
 
 

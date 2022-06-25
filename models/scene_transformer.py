@@ -19,7 +19,8 @@ class SceneTransformer(nn.Module):
         representation_dim: int,
         scene_model: Transformer,
         device: Union[str, torch.device],
-        mask_prob: float = 0.2,
+        mask_prob: float = 0.5,
+        pos_mask_prob: float = 0.9,
     ):
         super().__init__()
         self.scene_model = scene_model
@@ -42,6 +43,7 @@ class SceneTransformer(nn.Module):
         self.view_position_mask.data = self.query_token.data.to(device)
         self.view_direction_mask.data = self.query_token.data.to(device)
         self.mask_prob = mask_prob
+        self.pos_mask_prob = pos_mask_prob
 
     def register_encoders(
         self,
@@ -66,11 +68,16 @@ class SceneTransformer(nn.Module):
         semantic representation of the scene at position x y z.
         """
         # First, figure out how to mask each axis.
-        to_mask = ["rgb", "truth", "depth", "camera_pos", "camera_direction"]
+        to_mask = ["rgb", "truth", "depth"]
+        pos_mask = ["camera_pos", "camera_direction"]
         masked_dict = {}
         for key in to_mask:
             masked_dict[key] = utils.generate_batch_mask(
                 batch_size=len(view_dict[key]), masking_prob=self.mask_prob
+            ).to(view_dict[key].device)
+        for key in pos_mask:
+            masked_dict[key] = utils.generate_batch_mask(
+                batch_size=len(view_dict[key]), masking_prob=self.pos_mask_prob
             ).to(view_dict[key].device)
         encoded_views = self.view_encoder(view_dict, masked_dict)
 

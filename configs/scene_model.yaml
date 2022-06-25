@@ -17,6 +17,8 @@ wandb:
   tags:
     - full_transformer
 
+save_path: "/checkpoint/notmahi/data/saved_outputs"
+
 image_size: 224
 device: cuda
 representation_dim: 256
