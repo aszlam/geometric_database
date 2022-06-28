@@ -7,9 +7,9 @@ scene_transformer:
   scene_model:
     _target_: models.scene_models.transformers.Transformer
     dim: ${representation_dim}
-    depth: 3
+    depth: 4
     heads: 8
-    dim_heads: 16
+    dim_heads: 32
     mlp_dim: 256
     dropout: 0.2
     device: ${device}

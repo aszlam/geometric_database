@@ -31,7 +31,8 @@ class PixelLocationDecoder(AbstractDecoder):
         self._image_size = image_size
         self._subset_grid = subset_grid_size
         self._grid_size = self._image_size // self._subset_grid
-        self.loss = nn.SmoothL1Loss()
+        # self.loss = nn.SmoothL1Loss()
+        self.loss = nn.MSELoss()
 
     def register_embedding_map(self, embedding: nn.Embedding) -> None:
         super().register_embedding_map(embedding)

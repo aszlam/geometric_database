@@ -127,10 +127,12 @@ class HabitatViewDataset(Dataset):
         }
 
         if self.transforms:
-            output["rgb"] = self.transforms(output["rgb"])
+            output["rgb"] = self.transforms(output["rgb"]).float()
             output["truth"] = self.transforms(output["truth"]).squeeze(0)
-            output["depth"] = self.transforms(output["depth"]).squeeze(0)
-            output["xyz_position"] = self.transforms(output["xyz_position"]).squeeze(0)
+            output["depth"] = self.transforms(output["depth"]).squeeze(0).float()
+            output["xyz_position"] = (
+                self.transforms(output["xyz_position"]).squeeze(0).float()
+            )
 
         output["xyz_position"] = einops.rearrange(
             output["xyz_position"],

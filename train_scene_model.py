@@ -130,9 +130,11 @@ class Workspace:
         postfix_dict = {}
         iterator = tqdm.trange(self.cfg.train_epochs)
         for epoch in iterator:
+            self._num_epoch = epoch
             postfix_dict["train_loss"] = self.train_epoch()
             if (epoch + 1) % self.cfg.eval_every == 0:
-                save_data = (self.cfg.train_epochs - epoch) <= self.cfg.eval_every
+                # save_data = (self.cfg.train_epochs - epoch) <= self.cfg.eval_every
+                save_data = True
                 postfix_dict["test_loss"] = self.test_epoch(
                     save_decoded_results=save_data
                 )
@@ -170,9 +172,9 @@ class Workspace:
                 wandb.log({f"train/{k}": v for k, v in loss_dict.items()})
                 total_loss += loss
 
-            avg_loss += total_loss.detach().cpu().item()
-            iters += len(xyz_coordinates)
             total_loss.backward()
+            avg_loss += total_loss.detach().cpu().item()
+            iters += torch.numel(views_dict["xyz_position"][..., ::32, ::32])
             self.optimizer.step()
             wandb.log({f"train/avg_loss": avg_loss / iters})
         return avg_loss / iters
@@ -181,7 +183,7 @@ class Workspace:
         epoch_loss = 0
         epoch_samples = 0
         if save_decoded_results:
-            decoded_views, decoded_responses = [], []
+            decoded_views, decoded_responses, actual_xyz, actual_rgb = [], [], [], []
         for views, xyz in zip(self.view_test_dataloader, self.xyz_test_dataloader):
             with torch.no_grad():
                 views_dict = {
@@ -207,19 +209,31 @@ class Workspace:
                     if save_decoded_results:
                         decoded_views.append(decoded_view.detach().cpu())
                         decoded_responses.append(decoded_response.detach().cpu())
+                        actual_xyz.append(views["xyz_position"][..., ::32, ::32])
+                        actual_rgb.append(views["rgb"][..., :3, ::32, ::32])
                     wandb.log({f"test/{k}": v for k, v in loss_dict.items()})
                     total_loss += loss
                 epoch_loss += total_loss.detach().cpu().item()
                 epoch_samples += len(xyz_coordinates)
-        wandb.log({f"test/avg_loss": epoch_loss / epoch_samples})
         if save_decoded_results:
             torch.save(
-                torch.cat(decoded_views), f"{self.cfg.save_path}/decoded_views.pt"
+                torch.cat(decoded_views),
+                f"{self.cfg.save_path}/{self._num_epoch}_decoded_views.pt",
             )
             torch.save(
                 torch.cat(decoded_responses),
-                f"{self.cfg.save_path}/decoded_responses.pt",
+                f"{self.cfg.save_path}/{self._num_epoch}_decoded_responses.pt",
             )
+            torch.save(
+                torch.cat(actual_rgb),
+                f"{self.cfg.save_path}/{self._num_epoch}_gt_rgb.pt",
+            )
+            torch.save(
+                torch.cat(actual_xyz),
+                f"{self.cfg.save_path}/{self._num_epoch}_gt_xyz.pt",
+            )
+            epoch_samples = len(torch.cat(decoded_responses))
+        wandb.log({f"test/avg_loss": epoch_loss / epoch_samples})
         return epoch_loss / epoch_samples
 
 
