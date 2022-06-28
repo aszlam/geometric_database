@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 import torch
 import hydra
 import tqdm
@@ -131,21 +131,24 @@ class Workspace:
         iterator = tqdm.trange(self.cfg.train_epochs)
         for epoch in iterator:
             self._num_epoch = epoch
-            postfix_dict["train_loss"] = self.train_epoch()
+            postfix_dict["train_loss"] = self.train_epoch(epoch=epoch)
             if (epoch + 1) % self.cfg.eval_every == 0:
                 # save_data = (self.cfg.train_epochs - epoch) <= self.cfg.eval_every
                 save_data = True
                 postfix_dict["test_loss"] = self.test_epoch(
-                    save_decoded_results=save_data
+                    epoch=epoch, save_decoded_results=save_data
                 )
             iterator.set_postfix(postfix_dict)
             logging.info(str(postfix_dict))
 
-    def train_epoch(self) -> float:
+    def train_epoch(self, epoch: Optional[int] = None) -> float:
         avg_loss = 0
         iters = 0
+        self.scene_transformers[self.scene_names[0]].set_mask_prob(
+            mask_prob=0.5, pos_mask_prob=0.2 + 0.8 * (epoch / self.cfg.train_epochs)
+        )
         for views, xyz in tqdm.tqdm(
-            zip(cycle(self.view_train_dataloader), self.xyz_train_dataloader),
+            zip(self.view_train_dataloader, cycle(self.xyz_train_dataloader)),
             total=len(self.xyz_train_dataloader),
         ):
             self.optimizer.zero_grad(set_to_none=True)
@@ -174,17 +177,24 @@ class Workspace:
 
             total_loss.backward()
             avg_loss += total_loss.detach().cpu().item()
-            iters += torch.numel(views_dict["xyz_position"][..., ::32, ::32])
+            iters += 1
             self.optimizer.step()
-            wandb.log({f"train/avg_loss": avg_loss / iters})
+        wandb.log({f"train/avg_loss": avg_loss / iters})
         return avg_loss / iters
 
-    def test_epoch(self, save_decoded_results: bool = True) -> float:
+    def test_epoch(
+        self, epoch: Optional[int] = None, save_decoded_results: bool = True
+    ) -> float:
         epoch_loss = 0
         epoch_samples = 0
         if save_decoded_results:
             decoded_views, decoded_responses, actual_xyz, actual_rgb = [], [], [], []
-        for views, xyz in zip(self.view_test_dataloader, self.xyz_test_dataloader):
+        self.scene_transformers[self.scene_names[0]].set_mask_prob(
+            mask_prob=0.05, pos_mask_prob=0.95
+        )
+        for views, xyz in zip(
+            self.view_test_dataloader, cycle(self.xyz_test_dataloader)
+        ):
             with torch.no_grad():
                 views_dict = {
                     k: v.to(self.cfg.device)
@@ -214,7 +224,7 @@ class Workspace:
                     wandb.log({f"test/{k}": v for k, v in loss_dict.items()})
                     total_loss += loss
                 epoch_loss += total_loss.detach().cpu().item()
-                epoch_samples += len(xyz_coordinates)
+                epoch_samples += 1
         if save_decoded_results:
             torch.save(
                 torch.cat(decoded_views),
@@ -232,7 +242,6 @@ class Workspace:
                 torch.cat(actual_xyz),
                 f"{self.cfg.save_path}/{self._num_epoch}_gt_xyz.pt",
             )
-            epoch_samples = len(torch.cat(decoded_responses))
         wandb.log({f"test/avg_loss": epoch_loss / epoch_samples})
         return epoch_loss / epoch_samples
 

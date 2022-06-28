@@ -1,4 +1,4 @@
-from typing import Dict, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -57,6 +57,12 @@ class SceneTransformer(nn.Module):
         self.query_xyz_encoder = positional_encoder_query
         self.view_quat_encoder = quat_encoder
         self.view_encoder = view_encoder
+
+    def set_mask_prob(self, mask_prob: Optional[float], pos_mask_prob: Optional[float]):
+        if mask_prob and mask_prob <= 1.0:
+            self.mask_prob = mask_prob
+        if pos_mask_prob and pos_mask_prob <= 1.0:
+            self.pos_mask_prob = pos_mask_prob
 
     def forward(
         self,

@@ -21,6 +21,7 @@ class PixelLocationDecoder(AbstractDecoder):
         image_size: int = 224,
         subset_grid_size: int = 32,  # The regularity with which points are sampled.
         device: Union[str, torch.device] = "cuda",
+        lam: float = 100.0,
     ):
         super().__init__()
         self._rep_length = representation_length
@@ -31,8 +32,9 @@ class PixelLocationDecoder(AbstractDecoder):
         self._image_size = image_size
         self._subset_grid = subset_grid_size
         self._grid_size = self._image_size // self._subset_grid
-        # self.loss = nn.SmoothL1Loss()
-        self.loss = nn.MSELoss()
+        self.loss = nn.SmoothL1Loss()
+        # self.loss = nn.MSELoss()
+        self.lam = lam
 
     def register_embedding_map(self, embedding: nn.Embedding) -> None:
         super().register_embedding_map(embedding)
@@ -70,5 +72,7 @@ class PixelLocationDecoder(AbstractDecoder):
         _ = decoded_representation
         xyz_world = ground_truth[0]["xyz_position"]
         xyz_subset = xyz_world[..., :: self._subset_grid, :: self._subset_grid]
-        position_loss = self.loss(decoded_view_representation, xyz_subset)
-        return position_loss, dict(position_loss=position_loss)
+        position_loss = self.lam * self.loss(decoded_view_representation, xyz_subset)
+        return position_loss, dict(
+            position_loss=position_loss, distance=(position_loss * 2 / self.lam) ** 0.5
+        )

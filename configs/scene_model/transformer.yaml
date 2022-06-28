@@ -3,7 +3,7 @@ scene_transformer:
   representation_dim: ${representation_dim}
   device: ${device}
   mask_prob: 0.5
-  pos_mask_prob: 0.9
+  pos_mask_prob: 0.5
   scene_model:
     _target_: models.scene_models.transformers.Transformer
     dim: ${representation_dim}
