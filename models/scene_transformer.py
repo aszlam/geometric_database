@@ -125,10 +125,11 @@ class SceneTransformer(nn.Module):
         # same encoded sequences.
         # TODO Mahi: once we have gotten the encoded views and queries, randomly shuffle
         # and use half of them in each minibatch.
-        scene_tf_input = torch.cat([views, queries], dim=0).unsqueeze(
-            0
-        )  # Join along batch axis since scene_tf operates on sets anyway.
-        output: torch.Tensor = self.scene_model(scene_tf_input)
+        # scene_tf_input = torch.cat([views, queries], dim=0).unsqueeze(
+        #     0
+        # )  # Join along batch axis since scene_tf operates on sets anyway.
+        scene_tf_input = torch.cat([views, queries], dim=0)
+        output: torch.Tensor = self.scene_model(scene_tf_input).unsqueeze(0)
         assert output.size(1) == num_views + num_queries
         return output[:, :num_views, ...], output[:, num_views:, ...]
         # TODO Mahi decide if we want to add the positional encoding at every intermediate

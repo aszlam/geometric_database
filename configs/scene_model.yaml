@@ -1,7 +1,7 @@
 defaults:
   - _self_
   - view_encoder: timm
-  - scene_model: transformer
+  - scene_model: fully_connected
   - dataset: habitat
   - decoder: pixel_location_conv
 
