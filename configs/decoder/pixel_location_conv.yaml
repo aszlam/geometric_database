@@ -1,4 +1,4 @@
-_target_: models.task_decoders.pixel_location.PixelLocationDecoder
+_target_: models.task_decoders.pixel_location_conv.PixelLocationConvDecoder
 representation_length: ${representation_dim}
 depth: 3
 hidden_dim: 256

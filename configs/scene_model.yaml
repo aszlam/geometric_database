@@ -3,7 +3,7 @@ defaults:
   - view_encoder: timm
   - scene_model: transformer
   - dataset: habitat
-  - decoder: pixel_location
+  - decoder: pixel_location_conv
 
 optimizer:
   _target_: torch.optim.Adam
