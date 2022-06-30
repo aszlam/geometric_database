@@ -13,6 +13,7 @@ def torch_choice(pop_size: int, num_samples: int, device: str = "cuda"):
 
 
 def generate_batch_mask(batch_size: int, masking_prob: float = 0.5):
+    # This is 1 where we should mask
     return torch.rand(batch_size) < masking_prob
 
 

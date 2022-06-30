@@ -76,9 +76,15 @@ class Workspace:
         #     config=self.cfg.optimizer,
         #     params=chain(*optimizable_params),
         # )
-        self.optimizer = torch.optim.Adam(
+        # self.optimizer = torch.optim.Adam(
+        #     params=chain(*optimizable_params),
+        #     lr=1e-5,
+        #     betas=(0.9, 0.99),
+        # )
+        self.optimizer = torch.optim.SGD(
             params=chain(*optimizable_params),
             lr=1e-4,
+            # betas=(0.9, 0.99),
         )
 
         self._setup_datasets()

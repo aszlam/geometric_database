@@ -1,4 +1,5 @@
 from typing import Dict, Optional, Tuple, Union
+import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -60,9 +61,9 @@ class SceneTransformer(nn.Module):
 
     def set_mask_prob(self, mask_prob: Optional[float], pos_mask_prob: Optional[float]):
         if mask_prob and mask_prob <= 1.0:
-            self.mask_prob = mask_prob
+            self.mask_prob = 0  # mask_prob
         if pos_mask_prob and pos_mask_prob <= 1.0:
-            self.pos_mask_prob = pos_mask_prob
+            self.pos_mask_prob = 0  # pos_mask_prob
 
     def forward(
         self,
@@ -111,12 +112,20 @@ class SceneTransformer(nn.Module):
         num_views = len(encoded_view_xyz)
         num_queries = len(encoded_query_xyz)
 
+        # views = (
+        #     einops.repeat(self.view_token, "d -> b d 1 1", b=len(encoded_views))
+        #     + encoded_views
+        #     + einops.rearrange(masked_encoded_view_xyz, "b d -> b d 1 1")
+        #     + einops.rearrange(masked_encoded_view_quat, "b d -> b d 1 1")
+        # )
+
         views = (
             self.view_token
             + encoded_views
-            + masked_encoded_view_xyz
             + masked_encoded_view_quat
+            + masked_encoded_view_xyz
         )
+
         queries = self.query_token + encoded_query_xyz
         # Right now, in the transformer, there is a batch and there is a sequence.
         # We do not make a distinction right now, and just use the batch_size as 1
@@ -129,7 +138,8 @@ class SceneTransformer(nn.Module):
         #     0
         # )  # Join along batch axis since scene_tf operates on sets anyway.
         scene_tf_input = torch.cat([views, queries], dim=0)
-        output: torch.Tensor = self.scene_model(scene_tf_input).unsqueeze(0)
+        # scene_tf_input = views
+        output: torch.Tensor = self.scene_model(scene_tf_input.unsqueeze(0))
         assert output.size(1) == num_views + num_queries
         return output[:, :num_views, ...], output[:, num_views:, ...]
         # TODO Mahi decide if we want to add the positional encoding at every intermediate

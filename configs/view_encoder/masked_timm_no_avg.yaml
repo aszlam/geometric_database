@@ -1,4 +1,4 @@
-_target_: models.view_encoders.masked_timm_view_encoder.MaskedTimmViewEncoder
+_target_: models.view_encoders.masked_timm_no_avg.MaskedTimmNoPoolEncoder
 view_shape:
   - ${image_size}
   - ${image_size}

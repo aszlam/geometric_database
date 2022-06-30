@@ -9,10 +9,10 @@ import torch
 import torch.nn as nn
 
 from models.task_decoders.abstract_decoder import AbstractDecoder
-from models.scene_models.positional_encoding import FourierFeatures
+from utils.mlp import MLP
 
 
-class FourierPixelLocationConvDecoder(AbstractDecoder):
+class PixelLocationConvLargeDecoder(AbstractDecoder):
     def __init__(
         self,
         representation_length: int,
@@ -36,31 +36,22 @@ class FourierPixelLocationConvDecoder(AbstractDecoder):
         self.loss = nn.SmoothL1Loss()
         self.lam = lam
 
-        self._fourier_feature_mapping = FourierFeatures(
-            input_dim=3,
-            fourier_embedding_dim=32,
-            fourier_embedding_scale=0.5,
-        )
-
     def register_embedding_map(self, embedding: nn.Embedding) -> None:
         super().register_embedding_map(embedding)
         # Create an MLP to map the representation to the same length as the embedding dict.
         self.trunk = nn.Sequential(
-            Rearrange("b n (c h w) -> (b n) c h w", h=1, w=1),
             nn.ConvTranspose2d(
-                in_channels=self._rep_length, out_channels=64, kernel_size=4
+                in_channels=self._rep_length, out_channels=12, kernel_size=1
             ),
-            nn.ConvTranspose2d(in_channels=64, out_channels=32, kernel_size=3),
-            nn.ConvTranspose2d(in_channels=32, out_channels=32, kernel_size=2),
+            nn.ConvTranspose2d(in_channels=12, out_channels=3, kernel_size=1),
         )
         self.trunk = self.trunk.to(self._device)
-        self._fourier_feature_mapping = self._fourier_feature_mapping.to(self._device)
 
     def decode_representations(
         self, view_reps: torch.Tensor, scene_model_reps: torch.Tensor
     ) -> torch.Tensor:
         # We learn to extract the semantic tag of the position.
-        decoded_xyz = self.trunk(view_reps)
+        decoded_xyz = self.trunk(view_reps.squeeze(0))
         return decoded_xyz, scene_model_reps
 
     def compute_detailed_loss(
@@ -73,13 +64,7 @@ class FourierPixelLocationConvDecoder(AbstractDecoder):
         _ = decoded_representation
         xyz_world = ground_truth[0]["xyz_position"]
         xyz_subset = xyz_world[..., :: self._subset_grid, :: self._subset_grid]
-        fourier_xyz = self._fourier_feature_mapping(
-            einops.rearrange(xyz_subset, "b c h w -> b h w c")
-        )
-        reshaped_fourier = einops.rearrange(fourier_xyz, "b h w d -> b d h w")
-        position_loss = self.lam * self.loss(
-            decoded_view_representation, reshaped_fourier
-        )
+        position_loss = self.lam * self.loss(decoded_view_representation, xyz_subset)
         return position_loss, dict(
             position_loss=position_loss, distance=(position_loss * 2 / self.lam) ** 0.5
         )

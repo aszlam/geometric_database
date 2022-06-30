@@ -10,7 +10,7 @@ from models.scene_models.positional_encoding import FourierFeatures
 import utils
 
 
-class MaskedTimmViewEncoder(AbstractViewEncoder):
+class MaskedTimmNoPoolEncoder(AbstractViewEncoder):
     """
     View encoder where the architecture is initialized by a base timm library architecture.
     """
@@ -53,7 +53,10 @@ class MaskedTimmViewEncoder(AbstractViewEncoder):
             in_chans=(4 + 1 + xyz_embed_dim + semantic_embedding_len),
             num_classes=0,
         )
+        # Now, convert to the no-avg-pool model.
         self.visual_model.to(device)
+        self.final_avgpool = self.visual_model.global_pool
+        self.visual_model.global_pool = nn.Identity()
         # Create adapters for resizing the input images to the necessary size, and rescaling
         # the output representation to the right representation length.
         self._setup_adapters_and_masks()
@@ -89,9 +92,13 @@ class MaskedTimmViewEncoder(AbstractViewEncoder):
             {k: v.to(self.device) for k, v in sample_batch.items()},
             adapt_encoding=False,
         )
-        self._visual_rep_len = results.shape[-1]
+        self._visual_rep_len = results.shape[1]
         self.embedding_adapter = (
-            nn.Linear(self._visual_rep_len, self.representation_length)
+            nn.Conv2d(
+                in_channels=self._visual_rep_len,
+                out_channels=self.representation_length,
+                kernel_size=1,
+            )
             if self._visual_rep_len != self.representation_length
             else nn.Identity()
         )
