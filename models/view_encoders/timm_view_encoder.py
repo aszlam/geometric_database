@@ -34,13 +34,15 @@ class TimmViewEncoder(AbstractViewEncoder):
         self.num_semantic_classes = num_semantic_classes
         self.device = device
         self.representation_length = representation_length
-        self.visual_model = timm.create_model(
+
+        self.visual_model_whole = timm.create_model(
             model_name=timm_class,
             pretrained=True,
-            in_chans=(4 + 1 + semantic_embedding_len),
+            in_chans=(4 + 1 + 3 + semantic_embedding_len),
             num_classes=0,
         )
-        self.visual_model.to(device)
+        self.visual_model_whole.to(device)
+        # self.visual_model_features.to(device)
         # Create adapters for resizing the input images to the necessary size, and rescaling
         # the output representation to the right representation length.
         self._setup_adapters()
@@ -49,7 +51,8 @@ class TimmViewEncoder(AbstractViewEncoder):
         BATCH_SIZE = 2
         view_shape = self.view_shape
         depth = torch.randn((BATCH_SIZE,) + view_shape)
-        rgba = torch.randn((BATCH_SIZE, 4) + view_shape)
+        rgba = torch.randn((BATCH_SIZE,) + view_shape + (4,))
+        local_xyz = torch.randn((BATCH_SIZE,) + view_shape + (3,))
         semantic_segmentation = torch.randint_like(
             depth, high=self.num_semantic_classes
         ).long()
@@ -57,6 +60,7 @@ class TimmViewEncoder(AbstractViewEncoder):
             "rgb": rgba,
             "truth": semantic_segmentation,
             "depth": depth,
+            "local_xyz_position": local_xyz,
         }
         results = self.forward(
             {k: v.to(self.device) for k, v in sample_batch.items()},
@@ -76,12 +80,15 @@ class TimmViewEncoder(AbstractViewEncoder):
         """
         Forward a view and encode that into a representation.
         """
-        embedded_semantics = self.semantic_embedding_layer(x_dict["truth"])
-        # Now stack the channels.
-        rgba_image = einops.rearrange(x_dict["rgb"], "... c h w -> ... h w c")
         model_input = torch.cat(
-            [rgba_image, x_dict["depth"].unsqueeze(-1), embedded_semantics], dim=-1
+            [
+                x_dict["rgb"],
+                x_dict["depth"].unsqueeze(-1),
+                x_dict["local_xyz_position"],
+                self.semantic_embedding_layer(x_dict["truth"]),
+            ],
+            dim=-1,
         )
         channel_first = einops.rearrange(model_input, "... h w c -> ... c h w")
-        visual_rep = self.visual_model(channel_first)
+        visual_rep = self.visual_model_whole(channel_first)
         return visual_rep if not adapt_encoding else self.embedding_adapter(visual_rep)

@@ -2,8 +2,8 @@ _target_: models.view_encoders.timm_view_encoder.TimmViewEncoder
 view_shape:
   - ${image_size}
   - ${image_size}
-timm_class: efficientnet_b2
-semantic_embedding_len: 16
+timm_class: resnet18
+semantic_embedding_len: 10
 # TODO Mahi figure out the true number of semantic classes.
 num_semantic_classes: 256
 device: ${device}

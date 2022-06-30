@@ -21,7 +21,7 @@ def mask_batch_with_mask_token(
 ):
     # batch_mask_indices is assumed to be a boolean tensor indicating where the masking should
     # happen. On those places, we replace the batch data with the mask_token data.
-    new_batch = torch.zeros_like(batch).to(batch.device)
+    new_batch = torch.zeros_like(batch, device=batch.device)
     batch_mask_indices = batch_mask_indices.to(batch.device)
     new_batch[batch_mask_indices] = mask_token
     new_batch[~batch_mask_indices] = batch[~batch_mask_indices]

@@ -13,6 +13,7 @@ from utils.habitat_utils import (
     CUSTOM_POSE_EXTRACTOR,
     custom_pose_extractor_factory,
     depth_and_camera_to_global_xyz,
+    depth_and_camera_to_local_xyz,
 )
 import einops
 
@@ -81,10 +82,14 @@ class HabitatViewDataset(Dataset):
                 lambda x: self._instance_id_to_canonical_id.get(x, 0)
             )
 
+        self._cache = {}
+
     def __len__(self):
         return len(self.image_extractor)
 
     def __getitem__(self, idx):
+        if idx in self._cache:
+            return self._cache[idx]
         sample = self.image_extractor[idx]
         # self.extractor.poses gives you the pose information
         # (both x y z and also quarternions)
@@ -108,6 +113,11 @@ class HabitatViewDataset(Dataset):
         camera_direction: quaternion.quaternion = camera_state.rotation
         depth_shape = sample["depth"].shape
 
+        local_xyz = depth_and_camera_to_local_xyz(
+            image_sizes=depth_shape,
+            depth_map=sample["depth"],
+        )
+
         output = {
             "rgb": sample["rgba"],
             "truth": truth_mask.astype(int),
@@ -118,20 +128,27 @@ class HabitatViewDataset(Dataset):
             "agent_pos": np.array(agent_pos),
             "agent_direction": quaternion.as_float_array(agent_direction),
             "xyz_position": depth_and_camera_to_global_xyz(
+                local_xyz,
                 image_sizes=depth_shape,
-                depth_map=sample["depth"],
                 camera_position=np.array(camera_pos),
                 camera_direction=camera_direction,
             ),
+            "local_xyz_position": local_xyz,
             "scene_name": scene_fp,
         }
 
         if self.transforms:
-            output["rgb"] = self.transforms(output["rgb"]).float()
+            output["rgb"] = einops.rearrange(
+                self.transforms(output["rgb"]).float(), "... c h w -> ... h w c"
+            )
             output["truth"] = self.transforms(output["truth"]).squeeze(0)
             output["depth"] = self.transforms(output["depth"]).squeeze(0).float()
             output["xyz_position"] = (
                 self.transforms(output["xyz_position"]).squeeze(0).float()
+            )
+            output["local_xyz_position"] = einops.rearrange(
+                torch.from_numpy(output["local_xyz_position"]).squeeze(0).float(),
+                "... c h w -> ... h w c",
             )
 
         output["xyz_position"] = einops.rearrange(
@@ -139,6 +156,7 @@ class HabitatViewDataset(Dataset):
             "(w h) d -> d w h",
             w=depth_shape[0],
         )
+        self._cache[idx] = output
         return output
 
 
@@ -214,15 +232,15 @@ class HabitatLocationDataset(Dataset):
             )
             # Now, convert everything to their world coordinates.
             all_xyz: np.ndarray = data_dict["xyz_position"]
-            all_rgb: np.ndarray = data_dict["rgb"][:3, ...]
+            all_rgb: np.ndarray = data_dict["rgb"][..., :3]
             self.coordinates.append(
-                einops.rearrange(all_xyz, "d w h -> (w h) d")[subsampled]
+                einops.rearrange(all_xyz, "d w h-> (w h) d")[subsampled]
             )
             self.semantic_label.append(
                 einops.rearrange(data_dict["truth"], "w h -> (w h)")[subsampled]
             )
             self.rgb_data.append(
-                einops.rearrange(all_rgb, "d w h -> (w h) d")[subsampled]
+                einops.rearrange(all_rgb, "w h d -> (w h) d")[subsampled]
             )
 
         # Now combine everything in one array.

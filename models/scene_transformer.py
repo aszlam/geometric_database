@@ -96,14 +96,14 @@ class SceneTransformer(nn.Module):
             encoded_view_xyz,
             mask_token=self.view_position_mask,
             batch_mask_indices=utils.generate_batch_mask(
-                len(view_dict["camera_pos"]), masking_prob=self.mask_prob
+                len(view_dict["camera_pos"]), masking_prob=self.pos_mask_prob
             ),
         )
         masked_encoded_view_quat = utils.mask_batch_with_mask_token(
             encoded_view_quat,
             mask_token=self.view_direction_mask,
             batch_mask_indices=utils.generate_batch_mask(
-                len(view_dict["camera_direction"]), masking_prob=self.mask_prob
+                len(view_dict["camera_direction"]), masking_prob=self.pos_mask_prob
             ),
         )
         encoded_query_xyz = self.query_xyz_encoder(query_xyz.float())

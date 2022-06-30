@@ -153,12 +153,10 @@ def local_to_global_xyz(
     return einops.rearrange(global_positions, "b four n -> b n four")[:, :, :-3]
 
 
-def depth_and_camera_to_global_xyz(
+def depth_and_camera_to_local_xyz(
     image_sizes: Tuple[int, int],
     depth_map: np.ndarray,
-    camera_position: np.ndarray,
-    camera_direction: quaternion,
-) -> np.ndarray:
+):
     # Adapted from https://aihabitat.org/docs/habitat-lab/view-transform-warp.html
     image_size_x, image_size_y = image_sizes
     xs, ys = np.meshgrid(
@@ -167,7 +165,19 @@ def depth_and_camera_to_global_xyz(
     xs = xs.reshape(1, image_size_x, image_size_y)
     ys = ys.reshape(1, image_size_x, image_size_y)
     z = depth_map.reshape(1, image_size_x, image_size_y)
-    xyz_one = np.vstack((xs * z, ys * z, -z, np.ones_like(z)))
+    xyz = np.vstack((xs * z, ys * z, -z))
+    return xyz
+
+
+def depth_and_camera_to_global_xyz(
+    local_xyz: np.ndarray,
+    image_sizes: Tuple[int, int],
+    camera_position: np.ndarray,
+    camera_direction: quaternion,
+) -> np.ndarray:
+    # Adapted from https://aihabitat.org/docs/habitat-lab/view-transform-warp.html
+    image_size_x, image_size_y = image_sizes
+    xyz_one = np.vstack((local_xyz, np.ones((1, image_size_x, image_size_y))))
     xyz_one = xyz_one.reshape(4, -1)
 
     # Now create the camera-to-world matrix.

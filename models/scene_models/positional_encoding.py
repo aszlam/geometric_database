@@ -27,9 +27,9 @@ class FourierFeatures(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        assumes B x input_dim input
+        assumes ... x input_dim input
         """
-        return torch.cat([torch.cos(x @ self.B), torch.sin(x @ self.B)], 1)
+        return torch.cat([torch.cos(x @ self.B), torch.sin(x @ self.B)], -1)
 
     def to(self, device: Union[str, torch.device]):
         self.B = self.B.to(device)

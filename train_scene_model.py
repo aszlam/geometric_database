@@ -145,7 +145,7 @@ class Workspace:
         avg_loss = 0
         iters = 0
         self.scene_transformers[self.scene_names[0]].set_mask_prob(
-            mask_prob=0.5, pos_mask_prob=0.2 + 0.8 * (epoch / self.cfg.train_epochs)
+            mask_prob=0.1, pos_mask_prob=0.2 + 0.8 * (epoch / self.cfg.train_epochs)
         )
         for views, xyz in tqdm.tqdm(
             zip(self.view_train_dataloader, cycle(self.xyz_train_dataloader)),
