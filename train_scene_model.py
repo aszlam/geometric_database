@@ -81,10 +81,10 @@ class Workspace:
         #     lr=1e-5,
         #     betas=(0.9, 0.99),
         # )
-        self.optimizer = torch.optim.SGD(
+        self.optimizer = torch.optim.Adam(
             params=chain(*optimizable_params),
-            lr=1e-4,
-            # betas=(0.9, 0.99),
+            lr=3e-5,
+            betas=(0.9, 0.99),
         )
 
         self._setup_datasets()
@@ -153,9 +153,12 @@ class Workspace:
         self.scene_transformers[self.scene_names[0]].set_mask_prob(
             mask_prob=0.1, pos_mask_prob=0.2 + 0.8 * (epoch / self.cfg.train_epochs)
         )
+        self.scene_transformers[self.scene_names[0]].train()
+        for decoder in self.decoders:
+            decoder.train()
         for views, xyz in tqdm.tqdm(
             zip(self.view_train_dataloader, cycle(self.xyz_train_dataloader)),
-            total=len(self.xyz_train_dataloader),
+            total=len(self.view_train_dataloader),
         ):
             self.optimizer.zero_grad(set_to_none=True)
             xyz_coordinates = xyz["xyz"].to(self.cfg.device)
@@ -198,10 +201,14 @@ class Workspace:
         self.scene_transformers[self.scene_names[0]].set_mask_prob(
             mask_prob=0.05, pos_mask_prob=0.95
         )
-        for views, xyz in zip(
-            self.view_test_dataloader, cycle(self.xyz_test_dataloader)
-        ):
-            with torch.no_grad():
+
+        for decoder in self.decoders:
+            decoder.eval()
+        self.scene_transformers[self.scene_names[0]].eval()
+        with torch.no_grad():
+            for views, xyz in zip(
+                self.view_test_dataloader, cycle(self.xyz_test_dataloader)
+            ):
                 views_dict = {
                     k: v.to(self.cfg.device)
                     for k, v in views.items()
@@ -214,6 +221,7 @@ class Workspace:
                 ](views_dict, xyz_coordinates)
                 total_loss = 0.0
                 for decoder in self.decoders:
+                    decoder.eval()
                     decoded_view, decoded_response = decoder.decode_representations(
                         encoded_view, encoded_response
                     )
