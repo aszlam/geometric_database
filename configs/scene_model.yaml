@@ -1,9 +1,9 @@
 defaults:
   - _self_
-  - view_encoder: masked_timm
-  - scene_model: transformer
+  - view_encoder: masked_timm_no_avg_only_rgb
+  - scene_model: identity
   - dataset: habitat
-  - decoder: pixel_location_classifier
+  - decoder: pixel_location_camera_regress
 
 optimizer:
   _target_: torch.optim.Adam
@@ -15,9 +15,9 @@ optimizer:
 wandb:
   project: scene_transformer
   tags:
-    - full_transformer
+    - identity_large_image_model
 
-save_path: "/checkpoint/notmahi/data/saved_outputs"
+save_path: "/checkpoint/notmahi/data/saved_outputs_large_model_nonres"
 
 image_size: 224
 device: cuda
@@ -25,7 +25,7 @@ representation_dim: 512
 batch_size: 128
 xyz_batch_size: 128
 num_workers: 0
-train_epochs: 5000
+train_epochs: 25000
 eval_every: 10
 train_split_size: 0.5
 

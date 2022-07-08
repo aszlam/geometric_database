@@ -22,7 +22,9 @@ class PixelLocationConvLargeDecoder(AbstractDecoder):
         image_size: int = 224,
         subset_grid_size: int = 32,  # The regularity with which points are sampled.
         device: Union[str, torch.device] = "cuda",
-        lam: float = 10.0,
+        lam: float = 1.0,
+        use_log: bool = True,
+        use_residual: bool = True,
     ):
         super().__init__()
         self._rep_length = representation_length
@@ -35,6 +37,8 @@ class PixelLocationConvLargeDecoder(AbstractDecoder):
         self._grid_size = self._image_size // self._subset_grid
         self.loss = nn.SmoothL1Loss()
         self.lam = lam
+        self.use_residual = use_residual
+        self.use_log_loss = use_log
 
     def register_embedding_map(self, embedding: nn.Embedding) -> None:
         super().register_embedding_map(embedding)
@@ -51,7 +55,12 @@ class PixelLocationConvLargeDecoder(AbstractDecoder):
         self, view_reps: torch.Tensor, scene_model_reps: torch.Tensor
     ) -> torch.Tensor:
         # We learn to extract the semantic tag of the position.
-        decoded_xyz = self.trunk(view_reps.squeeze(0))
+        reps_only = view_reps.squeeze(0)
+        if self.use_residual:
+            mean_over_image = torch.mean(reps_only, dim=[-1, -2], keepdim=True)
+            decoded_xyz = self.trunk(reps_only + mean_over_image)
+        else:
+            decoded_xyz = self.trunk(reps_only)
         return decoded_xyz, scene_model_reps
 
     def compute_detailed_loss(
@@ -64,7 +73,19 @@ class PixelLocationConvLargeDecoder(AbstractDecoder):
         _ = decoded_representation
         xyz_world = ground_truth[0]["xyz_position"]
         xyz_subset = xyz_world[..., :: self._subset_grid, :: self._subset_grid]
-        position_loss = self.lam * self.loss(decoded_view_representation, xyz_subset)
-        return position_loss, dict(
-            position_loss=position_loss, distance=(position_loss * 2 / self.lam) ** 0.5
-        )
+        if self.use_log_loss:
+            position_loss = self.lam * torch.log(
+                self.loss(decoded_view_representation, xyz_subset)
+            )
+            return position_loss, dict(
+                position_loss=position_loss,
+                distance=(2 * torch.exp(position_loss / self.lam)) ** 0.5,
+            )
+        else:
+            position_loss = self.lam * (
+                self.loss(decoded_view_representation, xyz_subset)
+            )
+            return position_loss, dict(
+                position_loss=position_loss,
+                distance=(2 * (position_loss / self.lam)) ** 0.5,
+            )

@@ -66,7 +66,10 @@ class PixelLocationConvDecoder(AbstractDecoder):
         _ = decoded_representation
         xyz_world = ground_truth[0]["xyz_position"]
         xyz_subset = xyz_world[..., :: self._subset_grid, :: self._subset_grid]
-        position_loss = self.lam * self.loss(decoded_view_representation, xyz_subset)
+        position_loss = self.lam * torch.log(
+            self.loss(decoded_view_representation, xyz_subset)
+        )
         return position_loss, dict(
-            position_loss=position_loss, distance=(position_loss * 2 / self.lam) ** 0.5
+            position_loss=position_loss,
+            distance=(2 * torch.exp(position_loss / self.lam)) ** 0.5,
         )

@@ -1,4 +1,4 @@
-_target_: models.task_decoders.pixel_location_conv_large.PixelLocationConvLargeDecoder
+_target_: models.task_decoders.pixel_location_conv_x_plus_mean.PixelLocationConvLargeResidualDecoder
 representation_length: ${representation_dim}
 depth: 3
 hidden_dim: 256

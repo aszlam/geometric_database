@@ -1,8 +1,8 @@
-_target_: models.view_encoders.masked_timm_no_avg.MaskedTimmNoPoolEncoder
+_target_: models.view_encoders.masked_timm_no_avg_only_rgb.MaskedTimmNoPoolRGBOnlyEncoder
 view_shape:
   - ${image_size}
   - ${image_size}
-timm_class: resnet18
+timm_class: resnet50
 semantic_embedding_len: 4
 # TODO Mahi figure out the true number of semantic classes.
 num_semantic_classes: 256

@@ -76,14 +76,9 @@ class Workspace:
         #     config=self.cfg.optimizer,
         #     params=chain(*optimizable_params),
         # )
-        # self.optimizer = torch.optim.Adam(
-        #     params=chain(*optimizable_params),
-        #     lr=1e-5,
-        #     betas=(0.9, 0.99),
-        # )
         self.optimizer = torch.optim.Adam(
             params=chain(*optimizable_params),
-            lr=3e-5,
+            lr=self.cfg.optimizer.lr,
             betas=(0.9, 0.99),
         )
 

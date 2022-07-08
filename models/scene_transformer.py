@@ -112,21 +112,28 @@ class SceneTransformer(nn.Module):
         num_views = len(encoded_view_xyz)
         num_queries = len(encoded_query_xyz)
 
-        # views = (
-        #     einops.repeat(self.view_token, "d -> b d 1 1", b=len(encoded_views))
-        #     + encoded_views
-        #     + einops.rearrange(masked_encoded_view_xyz, "b d -> b d 1 1")
-        #     + einops.rearrange(masked_encoded_view_quat, "b d -> b d 1 1")
-        # )
-
         views = (
-            self.view_token
+            einops.repeat(self.view_token, "d -> b d 1 1", b=len(encoded_views))
             + encoded_views
-            + masked_encoded_view_quat
-            + masked_encoded_view_xyz
+            + einops.rearrange(masked_encoded_view_xyz, "b d -> b d 1 1")
+            + einops.rearrange(masked_encoded_view_quat, "b d -> b d 1 1")
         )
 
-        queries = self.query_token + encoded_query_xyz
+        # For now ignore the query token
+        queries = encoded_query_xyz # + self.query_token
+
+        scene_tf_input = views
+        # output: torch.Tensor = self.scene_model(scene_tf_input.unsqueeze(0))
+        output: torch.Tensor = self.scene_model(scene_tf_input)
+        return output, queries
+
+        # views = (
+        #     self.view_token
+        #     + encoded_views
+        #     + masked_encoded_view_quat
+        #     + masked_encoded_view_xyz
+        # )
+
         # Right now, in the transformer, there is a batch and there is a sequence.
         # We do not make a distinction right now, and just use the batch_size as 1
         # and sequence size as the full batch size. However, we can help the network learn
@@ -137,11 +144,9 @@ class SceneTransformer(nn.Module):
         # scene_tf_input = torch.cat([views, queries], dim=0).unsqueeze(
         #     0
         # )  # Join along batch axis since scene_tf operates on sets anyway.
-        scene_tf_input = torch.cat([views, queries], dim=0)
-        # scene_tf_input = views
-        output: torch.Tensor = self.scene_model(scene_tf_input.unsqueeze(0))
-        assert output.size(1) == num_views + num_queries
-        return output[:, :num_views, ...], output[:, num_views:, ...]
+        # scene_tf_input = torch.cat([views, queries], dim=0)
+        # assert output.size(1) == num_views + num_queries
+        # return output[:, :num_views, ...], output[:, num_views:, ...]
         # TODO Mahi decide if we want to add the positional encoding at every intermediate
         # transformer layers anyway
         # TODO Also figure out the attention map between different inputs. For example, we
