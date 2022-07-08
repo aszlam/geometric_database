@@ -86,7 +86,7 @@ class PixelLocationCameraDecoder(AbstractDecoder):
         )
         # Now figure out the transformation
         transformation_matrix = torch.cat(
-            [decoded_rotation_matrix, decoded_translation.unsqueeze(-2)], dim=-2
+            [decoded_rotation_matrix, decoded_translation.unsqueeze(-1)], dim=-1
         )
         # And to transform the local to global.
         local_coords_and_one = torch.cat(
@@ -108,7 +108,13 @@ class PixelLocationCameraDecoder(AbstractDecoder):
             ],
             dim=-1,
         )
-        projected_coords = torch.bmm(local_coords_and_one, transformation_matrix)
+        local_coord_transpose = einops.rearrange(local_coords_and_one, "b n d -> b d n")
+        projected_coords_transpose = torch.bmm(
+            transformation_matrix, local_coord_transpose
+        )
+        projected_coords = einops.rearrange(
+            projected_coords_transpose, "b d n -> b n d"
+        )
         position_loss = self.loss(
             projected_coords, einops.rearrange(xyz_subset, "b d w h -> b (w h) d")
         )
