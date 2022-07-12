@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - view_encoder: masked_timm_no_avg_only_rgb
+  - view_encoder: masked_clip
   - scene_model: identity
   - dataset: habitat
   - decoder: pixel_location_camera_regress

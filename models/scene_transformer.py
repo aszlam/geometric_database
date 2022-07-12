@@ -89,25 +89,34 @@ class SceneTransformer(nn.Module):
         encoded_views = self.view_encoder(view_dict, masked_dict)
 
         # Now, replace the view XYZ/quat with masks.
-        encoded_view_xyz = self.view_xyz_encoder(view_dict["camera_pos"].float())
+        encoded_view_xyz = self.view_xyz_encoder(
+            # view_dict["camera_pos"].float()
+            view_dict["camera_pos"]
+        )
         encoded_view_quat = self.view_quat_encoder(
-            view_dict["camera_direction"].float()
+            # view_dict["camera_direction"].float()
+            view_dict["camera_direction"]
         )
-        masked_encoded_view_xyz = utils.mask_batch_with_mask_token(
-            encoded_view_xyz,
-            mask_token=self.view_position_mask,
-            batch_mask_indices=utils.generate_batch_mask(
-                len(view_dict["camera_pos"]), masking_prob=self.pos_mask_prob
-            ),
+        # masked_encoded_view_xyz = utils.mask_batch_with_mask_token(
+        #     encoded_view_xyz,
+        #     mask_token=self.view_position_mask,
+        #     batch_mask_indices=utils.generate_batch_mask(
+        #         len(view_dict["camera_pos"]), masking_prob=self.pos_mask_prob
+        #     ),
+        # )
+        masked_encoded_view_xyz = encoded_view_xyz
+        # masked_encoded_view_quat = utils.mask_batch_with_mask_token(
+        #     encoded_view_quat,
+        #     mask_token=self.view_direction_mask,
+        #     batch_mask_indices=utils.generate_batch_mask(
+        #         len(view_dict["camera_direction"]), masking_prob=self.pos_mask_prob
+        #     ),
+        # )
+        masked_encoded_view_quat = encoded_view_quat
+        encoded_query_xyz = self.query_xyz_encoder(
+            # query_xyz.float()
+            query_xyz
         )
-        masked_encoded_view_quat = utils.mask_batch_with_mask_token(
-            encoded_view_quat,
-            mask_token=self.view_direction_mask,
-            batch_mask_indices=utils.generate_batch_mask(
-                len(view_dict["camera_direction"]), masking_prob=self.pos_mask_prob
-            ),
-        )
-        encoded_query_xyz = self.query_xyz_encoder(query_xyz.float())
 
         num_views = len(encoded_view_xyz)
         num_queries = len(encoded_query_xyz)
@@ -120,7 +129,7 @@ class SceneTransformer(nn.Module):
         )
 
         # For now ignore the query token
-        queries = encoded_query_xyz # + self.query_token
+        queries = encoded_query_xyz  # + self.query_token
 
         scene_tf_input = views
         # output: torch.Tensor = self.scene_model(scene_tf_input.unsqueeze(0))

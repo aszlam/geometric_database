@@ -23,7 +23,8 @@ class PixelLocationCameraDecoder(AbstractDecoder):
         image_size: int = 224,
         subset_grid_size: int = 32,  # The regularity with which points are sampled.
         device: Union[str, torch.device] = "cuda",
-        lam: float = 100.0,
+        lam: float = 1.0,
+        use_log_for_loss: float = True,
     ):
         super().__init__()
         self._rep_length = representation_length
@@ -37,6 +38,7 @@ class PixelLocationCameraDecoder(AbstractDecoder):
         self.loss = nn.SmoothL1Loss()
         # self.loss = nn.MSELoss()
         self.lam = lam
+        self._loss_transform = torch.log if use_log_for_loss else lambda x: x
 
     def register_embedding_map(self, embedding: nn.Embedding) -> None:
         super().register_embedding_map(embedding)
@@ -69,12 +71,17 @@ class PixelLocationCameraDecoder(AbstractDecoder):
         xyz_world = ground_truth[0]["xyz_position"]
         xyz_subset = xyz_world[..., :: self._subset_grid, :: self._subset_grid]
         # position_loss = self.lam * self.loss(decoded_view_representation, xyz_subset)
-        regression_loss = self.lam * self.loss(
-            decoded_view_representation,
-            torch.cat(
-                [ground_truth[0]["camera_pos"], ground_truth[0]["camera_direction"]],
-                dim=1,
-            ),
+        regression_loss = self.lam * self._loss_transform(
+            self.loss(
+                decoded_view_representation,
+                torch.cat(
+                    [
+                        ground_truth[0]["camera_pos"],
+                        ground_truth[0]["camera_direction"],
+                    ],
+                    dim=1,
+                ),
+            )
         )
         # Now calculate the distance by using some math.
         decoded_translation, decoded_rotation = (

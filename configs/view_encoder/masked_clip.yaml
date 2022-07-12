@@ -1,0 +1,7 @@
+_target_: models.view_encoders.masked_clip_no_avg.ClipEncoder
+view_shape:
+  - ${image_size}
+  - ${image_size}
+clip_class: RN50
+device: ${device}
+representation_length: ${representation_dim}

@@ -45,6 +45,7 @@ class HabitatViewDataset(Dataset):
         transforms=transforms.Compose([transforms.ToTensor()]),
         canonical_object_ids: bool = False,
         canonical_names_path: str = "dataloaders/object_maps.json",
+        use_cache: bool = True,
     ):
         # Sets the grid size and the height levels in the pose extractor
         custom_pose_extractor_factory(pose_extractor_grid_size, height_levels)
@@ -62,6 +63,7 @@ class HabitatViewDataset(Dataset):
             output=view_components,
         )
         self.poses = self.image_extractor.poses
+        self.id_to_name = self.image_extractor.instance_id_to_name
 
         # We will perform preprocessing transforms on the data
         self.transforms = transforms
@@ -72,8 +74,10 @@ class HabitatViewDataset(Dataset):
             self.instance_id_to_name = self.image_extractor.instance_id_to_name
             # Load the canonical name to ID mapper.
             self._name_to_id = {}
+            self._id_to_name = {}
             for obj in json.load(open(canonical_names_path)):
                 self._name_to_id[obj["name"]] = obj["id"]
+                self._id_to_name[obj["id"]] = obj["name"]
             self._instance_id_to_canonical_id = {
                 instance_id: self._name_to_id.get(name, 0)
                 for (instance_id, name) in self.instance_id_to_name.items()
@@ -83,12 +87,13 @@ class HabitatViewDataset(Dataset):
             )
 
         self._cache = {}
+        self._use_cache = use_cache
 
     def __len__(self):
         return len(self.image_extractor)
 
     def __getitem__(self, idx):
-        if idx in self._cache:
+        if self._use_cache and (idx in self._cache):
             return self._cache[idx]
         sample = self.image_extractor[idx]
         # self.extractor.poses gives you the pose information
@@ -156,7 +161,8 @@ class HabitatViewDataset(Dataset):
             "(w h) d -> d w h",
             w=depth_shape[0],
         )
-        self._cache[idx] = output
+        if self._use_cache:
+            self._cache[idx] = output
         return output
 
 
@@ -198,6 +204,8 @@ class HabitatLocationDataset(Dataset):
         self.coordinates = []
         self.semantic_label = []
         self.rgb_data = []
+        self.distance_data = []
+        self.indices = []
 
         self._extract_dataset()
 
@@ -242,6 +250,10 @@ class HabitatLocationDataset(Dataset):
             self.rgb_data.append(
                 einops.rearrange(all_rgb, "w h d -> (w h) d")[subsampled]
             )
+            self.indices.append(np.ones_like(self.semantic_label[-1]) * idx)
+            self.distance_data.append(
+                einops.rearrange(depth_map, "w h -> (w h)")[subsampled]
+            )
 
         # Now combine everything in one array.
         self.coordinates = torch.from_numpy(np.concatenate(self.coordinates, axis=0))
@@ -249,6 +261,10 @@ class HabitatLocationDataset(Dataset):
             np.concatenate(self.semantic_label, axis=0)
         )
         self.rgb_data = torch.from_numpy(np.concatenate(self.rgb_data, axis=0))
+        self.distance_data = torch.from_numpy(
+            np.concatenate(self.distance_data, axis=0)
+        )
+        self.indices = torch.from_numpy(np.concatenate(self.indices, axis=0))
 
     def __len__(self):
         return len(self.coordinates)
@@ -258,4 +274,6 @@ class HabitatLocationDataset(Dataset):
             "xyz": self.coordinates[idx],
             "label": self.semantic_label[idx],
             "rgb": self.rgb_data[idx],
+            "img_idx": self.indices[idx],
+            "distance": self.distance_data[idx],
         }

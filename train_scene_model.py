@@ -82,6 +82,7 @@ class Workspace:
             betas=(0.9, 0.99),
         )
 
+        self.scaler = torch.cuda.amp.grad_scaler.GradScaler()
         self._setup_datasets()
 
     def _setup_datasets(self):
@@ -165,24 +166,29 @@ class Workspace:
                 }
                 for data in (views, xyz)
             )
-            encoded_view, encoded_response = self.scene_transformers[
-                self.scene_names[0]
-            ](views_dict, xyz_coordinates)
-            total_loss = 0.0
-            for decoder in self.decoders:
-                decoded_view, decoded_response = decoder.decode_representations(
-                    encoded_view, encoded_response
-                )
-                loss, loss_dict = decoder.compute_detailed_loss(
-                    decoded_view, decoded_response, ground_truth=(views_dict, xyz_dict)
-                )
-                wandb.log({f"train/{k}": v for k, v in loss_dict.items()})
-                total_loss += loss
+            with torch.autocast(device_type=self.cfg.device):
+                encoded_view, encoded_response = self.scene_transformers[
+                    self.scene_names[0]
+                ](views_dict, xyz_coordinates)
+                total_loss = 0.0
+                for decoder in self.decoders:
+                    decoded_view, decoded_response = decoder.decode_representations(
+                        encoded_view, encoded_response
+                    )
+                    loss, loss_dict = decoder.compute_detailed_loss(
+                        decoded_view,
+                        decoded_response,
+                        ground_truth=(views_dict, xyz_dict),
+                    )
+                    wandb.log({f"train/{k}": v for k, v in loss_dict.items()})
+                    total_loss += loss
 
-            total_loss.backward()
+            self.scaler.scale(total_loss).backward()
+            # total_loss.backward()
             avg_loss += total_loss.detach().cpu().item()
             iters += 1
-            self.optimizer.step()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
         wandb.log({f"train/avg_loss": avg_loss / iters})
         return avg_loss / iters
 
@@ -200,40 +206,41 @@ class Workspace:
         for decoder in self.decoders:
             decoder.eval()
         self.scene_transformers[self.scene_names[0]].eval()
-        with torch.no_grad():
-            for views, xyz in zip(
-                self.view_test_dataloader, cycle(self.xyz_test_dataloader)
-            ):
-                views_dict = {
-                    k: v.to(self.cfg.device)
-                    for k, v in views.items()
-                    if k not in ["scene_name"]
-                }
-                xyz_dict = {k: v.to(self.cfg.device) for k, v in xyz.items()}
-                xyz_coordinates = xyz_dict["xyz"]
-                encoded_view, encoded_response = self.scene_transformers[
-                    self.scene_names[0]
-                ](views_dict, xyz_coordinates)
-                total_loss = 0.0
-                for decoder in self.decoders:
-                    decoder.eval()
-                    decoded_view, decoded_response = decoder.decode_representations(
-                        encoded_view, encoded_response
-                    )
-                    loss, loss_dict = decoder.compute_detailed_loss(
-                        decoded_view,
-                        decoded_response,
-                        ground_truth=(views_dict, xyz_dict),
-                    )
-                    if save_decoded_results:
-                        decoded_views.append(decoded_view.detach().cpu())
-                        decoded_responses.append(decoded_response.detach().cpu())
-                        actual_xyz.append(views["xyz_position"][..., ::32, ::32])
-                        actual_rgb.append(views["rgb"][..., :3, ::32, ::32])
-                    wandb.log({f"test/{k}": v for k, v in loss_dict.items()})
-                    total_loss += loss
-                epoch_loss += total_loss.detach().cpu().item()
-                epoch_samples += 1
+        with torch.autocast(device_type=self.cfg.device):
+            with torch.no_grad():
+                for views, xyz in zip(
+                    self.view_test_dataloader, cycle(self.xyz_test_dataloader)
+                ):
+                    views_dict = {
+                        k: v.to(self.cfg.device)
+                        for k, v in views.items()
+                        if k not in ["scene_name"]
+                    }
+                    xyz_dict = {k: v.to(self.cfg.device) for k, v in xyz.items()}
+                    xyz_coordinates = xyz_dict["xyz"]
+                    encoded_view, encoded_response = self.scene_transformers[
+                        self.scene_names[0]
+                    ](views_dict, xyz_coordinates)
+                    total_loss = 0.0
+                    for decoder in self.decoders:
+                        decoder.eval()
+                        decoded_view, decoded_response = decoder.decode_representations(
+                            encoded_view, encoded_response
+                        )
+                        loss, loss_dict = decoder.compute_detailed_loss(
+                            decoded_view,
+                            decoded_response,
+                            ground_truth=(views_dict, xyz_dict),
+                        )
+                        if save_decoded_results:
+                            decoded_views.append(decoded_view.detach().cpu())
+                            decoded_responses.append(decoded_response.detach().cpu())
+                            actual_xyz.append(views["xyz_position"][..., ::32, ::32])
+                            actual_rgb.append(views["rgb"][..., :3, ::32, ::32])
+                        wandb.log({f"test/{k}": v for k, v in loss_dict.items()})
+                        total_loss += loss
+                    epoch_loss += total_loss.detach().cpu().item()
+                    epoch_samples += 1
         if save_decoded_results:
             torch.save(
                 torch.cat(decoded_views),
