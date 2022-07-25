@@ -12,3 +12,5 @@ wrapper.sh
 *.so
 *.o
 *.egg-info
+build
+
