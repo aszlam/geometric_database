@@ -5,5 +5,10 @@ wandb
 training.log
 
 # Slurm files
-run_slurm.sbatch
+*.sbatch
 wrapper.sh
+
+# C/C++ bindings files
+*.so
+*.o
+*.egg-info

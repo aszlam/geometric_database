@@ -12,10 +12,11 @@ from torch.utils.data import DataLoader, random_split, WeightedRandomSampler
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import einops
 
 from utils.mlp import MLP
 from models.scene_models.positional_encoding import FourierFeatures
+from implicit_models.implicit_mlp import ImplicitSurfaceModel, ImplicitCLIPModel
+from implicit_models.grid_hash_model import GridSurfaceModel, GridCLIPModel
 from itertools import chain, cycle
 import glob
 import os
@@ -32,132 +33,33 @@ SCENE_FILEPATH = [
 ]
 
 REAL_SCENE_DIRECTORY = glob.glob(
-    "/private/home/notmahi/data/stretch_fairmont/trajectories/july10_fremont/*/"
+    "/private/home/notmahi/data/stretch_fairmont/trajectories/july10_fremont/bed2/"
 )
 # REAL_SCENE_DIRECTORY = (
 #     "/private/home/notmahi/data/stretch_fairmont/trajectories/july10_fremont/couch3/"
 # )
 BATCH_SIZE = 256
 
-SAVE_DIRECTORY = "real_world_reweighted"
+SAVE_DIRECTORY = "real_world_bed2_w_background_high_img_loss"
 
 # Create model using a simple MLP and a Fourier projection.
 # This model should really tell you the probability of something being a surface point or not.
 
 
-class ImplicitSurfaceModel(nn.Module):
-    def __init__(
-        self,
-        depth: int = 3,
-        width: int = 512,
-        batchnorm: bool = False,
-        fourier_dim: int = 256,
-    ):
-        super().__init__()
-        self.fourier_proj = FourierFeatures(
-            input_dim=3, fourier_embedding_dim=fourier_dim
-        )
-        self.trunk = MLP(
-            input_dim=fourier_dim,
-            output_dim=1,
-            batchnorm=batchnorm,
-            hidden_depth=depth,
-            hidden_dim=width,
-        )
-
-    def to(self, device):
-        self.fourier_proj = self.fourier_proj.to(device)
-        self.trunk = self.trunk.to(device)
-        return self
-
-    def forward(self, x: torch.Tensor):
-        return self.trunk(self.fourier_proj(x))
-
-
-class ImplicitCLIPModel(nn.Module):
-    def __init__(
-        self,
-        depth: int = 6,
-        width: int = 2048,
-        batchnorm: bool = False,
-        use_camera_dir: bool = False,
-        fourier_dim: int = 256,
-        clip_dim: int = 512,
-    ):
-        super().__init__()
-        input_dim = 3
-        if use_camera_dir:
-            input_dim += 4
-        self.fourier_proj = FourierFeatures(
-            input_dim=input_dim,
-            fourier_embedding_dim=fourier_dim,
-            fourier_embedding_scale=1 / (2.0 ** 1),
-        )
-        self.trunk_1 = MLP(
-            input_dim=fourier_dim,
-            output_dim=width,
-            batchnorm=batchnorm,
-            hidden_depth=depth // 2,
-            hidden_dim=width,
-        )
-        self.trunk_2 = MLP(
-            input_dim=width + fourier_dim,
-            output_dim=2 * clip_dim,
-            batchnorm=batchnorm,
-            hidden_depth=depth // 2,
-            hidden_dim=width,
-        )
-        # Magic value adviced by @imisra
-        self.temperature = nn.Parameter(torch.log(torch.tensor(1.0 / 0.07)))
-
-    def to(self, device):
-        self.fourier_proj = self.fourier_proj.to(device)
-        self.trunk_1 = self.trunk_1.to(device)
-        self.trunk_2 = self.trunk_2.to(device)
-        self.temperature.data = self.temperature.data.to(device)
-        return self
-
-    def forward(self, x: torch.Tensor):
-        projected_x = self.fourier_proj(x)
-        joint_output = self.trunk_2(
-            torch.cat([self.trunk_1(projected_x), projected_x], dim=-1)
-        )
-        label_latent, image_latent = torch.chunk(joint_output, chunks=2, dim=-1)
-        return label_latent, image_latent
-
-    def compute_loss(
-        self, predicted_latents, actual_latents, label_mask=None, weights=None
-    ):
-        temp = torch.exp(self.temperature)
-        sim = torch.einsum("i d, j d -> i j", predicted_latents, actual_latents) * temp
-        # Zero out the cells where the labels are same.
-        if label_mask is not None:
-            sim = sim * label_mask
-            del label_mask
-        labels = torch.arange(len(predicted_latents), device=predicted_latents.device)
-        if weights is None:
-            loss = (F.cross_entropy(sim, labels) + F.cross_entropy(sim.t(), labels)) / 2
-        else:
-            loss = (
-                F.cross_entropy(sim, labels, reduction="none")
-                + F.cross_entropy(sim.t(), labels, reduction="none")
-            ) / 2
-            loss = (loss * weights).mean()
-        return loss
-
-
 DEVICE = "cuda"
 IMAGE_BATCH_SIZE = 32 * 7 * 7
 IMAGE_SIZE = 224
-POINT_BATCH_SIZE = 128 * 7 * 7
-IMAGE_TO_LABEL_CLIP_LOSS_SCALE = 2.0
+POINT_BATCH_SIZE = 256 * 7 * 7
+IMAGE_TO_LABEL_CLIP_LOSS_SCALE = 10.0
 LABEL_TO_IMAGE_LOSS_SCALE = 1.0
-EXP_DECAY_COEFF = 1.0
+EXP_DECAY_COEFF = 0.5
 # EPOCHS = 5000
 EPOCHS = 500
-SUBSAMPLE_PROB = 0.1
+SUBSAMPLE_PROB = 0.2
 EVAL_EVERY = 5
 SURFACE_LOSS_LAMBDA = 10.0
+
+MODEL_TYPE = "hash"  # MLP or hash
 
 
 # def extract_positive_and_negative_surface_examples(datapoint_dict):
@@ -226,7 +128,10 @@ def train(
         xyzs = clip_data_dict["xyz"].to(DEVICE)
         clip_labels = clip_data_dict["clip_vector"].to(DEVICE)
         clip_image_labels = clip_data_dict["clip_image_vector"].to(DEVICE)
-        weights = torch.exp(-EXP_DECAY_COEFF * clip_data_dict["distance"]).to(DEVICE)
+        image_weights = torch.exp(-EXP_DECAY_COEFF * clip_data_dict["distance"]).to(
+            DEVICE
+        )
+        label_weights = clip_data_dict["semantic_weight"].to(DEVICE)
         predicted_label_latents, predicted_image_latents = labelling_model(xyzs)
         # Now create the label mask for the contrastive losses.
         # The idea is that we want to push and pull the representations to the right
@@ -260,13 +165,16 @@ def train(
         # Use the predicted labels, the ground truth labels, and the masks to
         # compute the contrastive loss.
         contrastive_loss_labels = labelling_model.compute_loss(
-            predicted_label_latents, clip_labels, label_mask=language_label_mask
+            predicted_label_latents,
+            clip_labels,
+            label_mask=language_label_mask,
+            weights=label_weights,
         )
         contrastive_loss_images = labelling_model.compute_loss(
             predicted_image_latents,
             clip_image_labels,
             label_mask=image_label_mask,
-            weights=weights,
+            weights=image_weights,
         )
         del (
             image_label_mask,
@@ -342,6 +250,7 @@ def test(test_loader, clip_test_loader, surface_model, labelling_model):
             weights = torch.exp(-EXP_DECAY_COEFF * clip_data_dict["distance"]).to(
                 DEVICE
             )
+            label_weights = clip_data_dict["semantic_weight"].to(DEVICE)
             # predicted_latents = labelling_model(xyzs)
             predicted_label_latents, predicted_image_latents = labelling_model(xyzs)
             image_label_index = clip_data_dict["img_idx"].to(DEVICE).reshape(-1, 1)
@@ -362,6 +271,7 @@ def test(test_loader, clip_test_loader, surface_model, labelling_model):
                 predicted_label_latents,
                 clip_labels,
                 label_mask=language_label_mask,
+                weights=label_weights,
             )
             contrastive_loss_images = labelling_model.compute_loss(
                 predicted_image_latents,
@@ -442,8 +352,8 @@ def test(test_loader, clip_test_loader, surface_model, labelling_model):
 
 def get_dataset():
     dataset = RealWorldSemanticDataset(REAL_SCENE_DIRECTORY)
-    surface_dataset = RealWorldSurfaceDataset(dataset)
-    clip_dataset = RealWorldClipDataset(dataset)
+    surface_dataset = RealWorldSurfaceDataset(dataset, sampling_rate=0.2)
+    clip_dataset = RealWorldClipDataset(dataset, sampling_rate=0.2)
 
     # Now split both of the datasets in half
     surface_train_split_size = int(len(surface_dataset) * 0.98)
@@ -511,8 +421,13 @@ if __name__ == "__main__":
     logging.info(
         f"Test loader sizes: surface {len(test_loader)}, clip {len(clip_test_loader)}"
     )
-    surface_model = ImplicitSurfaceModel()
-    labelling_model = ImplicitCLIPModel()
+
+    if MODEL_TYPE == "MLP":
+        surface_model = ImplicitSurfaceModel()
+        labelling_model = ImplicitCLIPModel()
+    elif MODEL_TYPE == "hash":
+        surface_model = GridSurfaceModel()
+        labelling_model = GridCLIPModel()
 
     surface_model = surface_model.to(DEVICE)
     labelling_model = labelling_model.to(DEVICE)
@@ -526,6 +441,9 @@ if __name__ == "__main__":
 
     wandb.init(
         project="implicit_clip_model",
+        tags=[
+            f"model/{MODEL_TYPE}",
+        ],
     )
 
     os.makedirs(

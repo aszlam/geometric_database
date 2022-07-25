@@ -5,3 +5,4 @@ ftfy==6.1.1
 regex==2022.6.2
 tqdm==4.64.0
 point-transformer-pytorch==0.1.5
+sentence_transformers==2.2.2
