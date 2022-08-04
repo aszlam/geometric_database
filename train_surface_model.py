@@ -57,8 +57,8 @@ DEVICE = "cuda"
 IMAGE_BATCH_SIZE = 32 * 7 * 7
 IMAGE_SIZE = 224
 POINT_BATCH_SIZE = 256 * 7 * 7
-IMAGE_TO_LABEL_CLIP_LOSS_SCALE = 0.0
-LABEL_TO_IMAGE_LOSS_SCALE = 0.0
+IMAGE_TO_LABEL_CLIP_LOSS_SCALE = 1.0
+LABEL_TO_IMAGE_LOSS_SCALE = 1.0
 EXP_DECAY_COEFF = 0.5
 # EPOCHS = 5000
 EPOCHS = 500
@@ -211,7 +211,7 @@ def train(
             )
             accuracy = accuracy.detach().cpu().item()
         else:
-            inst_segmentation_loss = 0.0
+            inst_segmentation_loss = torch.zeros_like(contrastive_loss_images)
             accuracy = 1.0
 
         total_accuracy += accuracy
@@ -498,17 +498,17 @@ if __name__ == "__main__":
     test_loader = DataLoader(
         view_test_dataset, batch_size=IMAGE_BATCH_SIZE, shuffle=False, pin_memory=True
     )
-    # (
-    #     label_point_weights,
-    #     label_voxel_count,
-    # ) = get_voxel_normalized_sampler_and_occupied_voxels(clip_train_dataset)
-    # label_sampler = WeightedRandomSampler(
-    #     weights=label_point_weights, num_samples=label_voxel_count
-    # )
+    (
+        label_point_weights,
+        label_voxel_count,
+    ) = get_voxel_normalized_sampler_and_occupied_voxels(clip_train_dataset)
+    label_sampler = WeightedRandomSampler(
+        weights=label_point_weights, num_samples=label_voxel_count
+    )
     clip_train_loader = DataLoader(
         clip_train_dataset,
         batch_size=POINT_BATCH_SIZE,
-        # sampler=label_sampler,
+        sampler=label_sampler,
         pin_memory=True,
     )
     clip_test_loader = DataLoader(
