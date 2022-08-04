@@ -1,40 +1,45 @@
-from turtle import back
+import glob
+import json
+import os
+from typing import Optional
+
+import clip
+
+# Some basic setup:
+# Setup detectron2 logger
+import detectron2
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import tqdm
-from pyntcloud import PyntCloud
-import clip
-from sentence_transformers import SentenceTransformer, util
-import json
-import numpy as np
-import os
-import glob
-from PIL import Image
-from torch.utils.data import Dataset
-from typing import Optional
-
-# Some basic setup:
-# Setup detectron2 logger
-import detectron2
 from detectron2.utils.logger import setup_logger
+from PIL import Image
+from pyntcloud import PyntCloud
+from sentence_transformers import SentenceTransformer, util
+from torch.utils.data import Dataset
 
 setup_logger()
 
+import json
+import os
+import random
+
 # import some common libraries
 import sys
-import numpy as np
-import os, json, cv2, random
 
-# from google.colab.patches import cv2_imshow
+import cv2
+import numpy as np
 
 # import some common detectron2 utilities
 from detectron2 import model_zoo
-from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
+from detectron2.data import DatasetCatalog, MetadataCatalog
+from detectron2.engine import DefaultPredictor
 from detectron2.utils.visualizer import Visualizer
-from detectron2.data import MetadataCatalog, DatasetCatalog
+
+# from google.colab.patches import cv2_imshow
 
 # Detic libraries
 sys.path.insert(0, "/private/home/notmahi/code/Detic/third_party/CenterNet2/")
@@ -42,7 +47,6 @@ sys.path.insert(0, "/private/home/notmahi/code/Detic/")
 from centernet.config import add_centernet_config
 from detic.config import add_detic_config
 from detic.modeling.utils import reset_cls_test
-
 
 cfg = get_cfg()
 add_centernet_config(cfg)
@@ -84,12 +88,40 @@ classifier = BUILDIN_CLASSIFIER[vocabulary]
 num_classes = len(metadata.thing_classes)
 reset_cls_test(predictor.model, classifier, num_classes)
 
+# Hardcoded values from the stretch robot base-to-camera translation.
+ROBOT_CAM_TRANSFORMS = (0.06954502, 0.01464471, 1.23843322)
+
 
 def rotate_image(image):
     if isinstance(image, np.ndarray):
         return np.rot90(image, k=1, axes=(0, 1))
     else:
         return torch.rot90(image, 1, [0, 1])
+
+
+def rotz(theta):
+    return np.array(
+        [
+            [np.cos(theta), -np.sin(theta), 0],
+            [np.sin(theta), np.cos(theta), 0],
+            [0, 0, 1.0],
+        ],
+    )
+
+
+def robot_coord_to_world_coord(robot_coord: np.ndarray) -> torch.Tensor:
+    # Process robot coordinate in [base_x, base_y, base_rotation_z] to real world coords.
+    rotation_angle = robot_coord[2]
+    cam_xyz = np.array(
+        [
+            robot_coord[0] + ROBOT_CAM_TRANSFORMS[0],
+            robot_coord[1] + ROBOT_CAM_TRANSFORMS[1],
+            ROBOT_CAM_TRANSFORMS[2],
+        ]
+    )
+    # Now rotate the camera.
+    cam_xyz_world = rotz(rotation_angle) @ cam_xyz
+    return torch.from_numpy(cam_xyz_world).float()
 
 
 class RealWorldSemanticDataset:
@@ -133,6 +165,10 @@ class RealWorldSemanticDataset:
         self._sentence_encoding_model_name = sentence_encoding_model_name
         self._device = device
 
+        # Set up the encoding lengths
+        self._text_embed_size = -1
+        self._image_embed_size = -1
+
         self._build_dataset()
 
     def _build_dataset(self):
@@ -161,7 +197,7 @@ class RealWorldSemanticDataset:
 
                 image_id = np.ones_like(depth[depth_valid]) * image_idx
                 self._image_id.append(image_id)
-                self._image_idx_to_camera[image_idx] = torch.tensor(
+                self._image_idx_to_camera[image_idx] = robot_coord_to_world_coord(
                     step_logs["poses"][step_id - 1]
                 )
 
@@ -181,10 +217,11 @@ class RealWorldSemanticDataset:
                 background_mask = torch.ones_like(torch_depth_valid)
                 # Now figure out each label and label mask.
                 instance = outputs["instances"]
-                for pred_class, pred_mask, pred_score in zip(
+                for pred_class, pred_mask, pred_score, feature in zip(
                     instance.pred_classes.cpu(),
                     instance.pred_masks.cpu(),
                     instance.scores.cpu(),
+                    instance.features.cpu(),
                 ):
                     rotated_pred_mask = rotate_image(pred_mask)
                     mask_flattened = rotated_pred_mask[depth_valid]
@@ -271,24 +308,29 @@ class RealWorldSemanticDataset:
         if sentence_encoding_model_name is None:
             sentence_encoding_model_name = self._sentence_encoding_model_name
         clip_model, preprocess = clip.load(clip_model_name, device=self._device)
+        sentence_model = SentenceTransformer(sentence_encoding_model_name)
         all_used_id_to_name = {}
         all_used_id_to_vector = {}
         for class_id in self._all_possible_ids:
             name = self._id_to_class_name[class_id]
             all_used_id_to_name[class_id] = name
             text_strings.append(self.CLIP_PROMPT + name.replace("_", " "))
-        # text_strings.append(self.EMPTY)
-        clip_tokens = clip.tokenize(text_strings)
-        # Now, encode them into Clip vectors.
-        all_embedded_text = []
+        # # text_strings.append(self.EMPTY)
+        # clip_tokens = clip.tokenize(text_strings)
+        # # Now, encode them into Clip vectors.
+        # all_embedded_text = []
+        # with torch.no_grad():
+        #     for i in range(0, len(clip_tokens), batch_size):
+        #         start, end = i, min(i + batch_size, len(clip_tokens))
+        #         batch_data = clip_tokens[start:end].to(self._device)
+        #         embedded_text = clip_model.encode_text(batch_data).float()
+        #         embedded_text = F.normalize(embedded_text, p=2, dim=-1)
+        #         all_embedded_text.append(embedded_text.cpu())
+        # all_embedded_text = torch.cat(all_embedded_text)
         with torch.no_grad():
-            for i in range(0, len(clip_tokens), batch_size):
-                start, end = i, min(i + batch_size, len(clip_tokens))
-                batch_data = clip_tokens[start:end].to(self._device)
-                embedded_text = clip_model.encode_text(batch_data).float()
-                embedded_text = F.normalize(embedded_text, p=2, dim=-1)
-                all_embedded_text.append(embedded_text.cpu())
-        all_embedded_text = torch.cat(all_embedded_text)
+            all_embedded_text = sentence_model.encode(text_strings)
+        all_embedded_text = torch.from_numpy(all_embedded_text)
+        self._text_embed_size = all_embedded_text.size(-1)
         for class_id, embed in zip(all_used_id_to_name.keys(), all_embedded_text):
             all_used_id_to_vector[class_id] = embed
 
@@ -306,9 +348,18 @@ class RealWorldSemanticDataset:
                 embedded_image = F.normalize(embedded_image, p=2, dim=-1)
                 all_embedded_image.append(embedded_image.cpu())
         all_embedded_image = torch.cat(all_embedded_image)
+        self._image_embed_size = all_embedded_image.size(-1)
         self._image_idx_to_vector = {
             idx: embed for (idx, embed) in enumerate(all_embedded_image)
         }
+
+    @property
+    def image_representation_size(self):
+        return self._image_embed_size
+
+    @property
+    def text_representation_size(self):
+        return self._text_embed_size
 
     def export_to_rgb_pcd(self):
         # Export the RGB points to pointcloud format.

@@ -43,7 +43,7 @@ class HabitatViewDataset(Dataset):
         height_levels: int = 5,
         image_size: Iterable[int] = (512, 512),
         transforms=transforms.Compose([transforms.ToTensor()]),
-        canonical_object_ids: bool = False,
+        canonical_object_ids: bool = True,
         canonical_names_path: str = "dataloaders/object_maps.json",
         use_cache: bool = True,
     ):
@@ -125,7 +125,8 @@ class HabitatViewDataset(Dataset):
 
         output = {
             "rgb": sample["rgba"],
-            "truth": truth_mask.astype(int),
+            "semantic_segmentation": truth_mask.astype(int),
+            "instance_segmentation": raw_semantic_output.astype(int),
             "depth": sample["depth"],
             "camera_pos": np.array(camera_pos),
             "camera_direction": quaternion.as_float_array(camera_direction),
@@ -146,7 +147,12 @@ class HabitatViewDataset(Dataset):
             output["rgb"] = einops.rearrange(
                 self.transforms(output["rgb"]).float(), "... c h w -> ... h w c"
             )
-            output["truth"] = self.transforms(output["truth"]).squeeze(0)
+            output["semantic_segmentation"] = self.transforms(
+                output["semantic_segmentation"]
+            ).squeeze(0)
+            output["instance_segmentation"] = self.transforms(
+                output["instance_segmentation"]
+            ).squeeze(0)
             output["depth"] = self.transforms(output["depth"]).squeeze(0).float()
             output["xyz_position"] = (
                 self.transforms(output["xyz_position"]).squeeze(0).float()
@@ -189,7 +195,10 @@ class HabitatLocationDataset(Dataset):
         self,
         habitat_view_ds: HabitatViewDataset,
         object_extraction_depth: float = 0.5,
-        subsample_prob: float = 0.02,
+        subsample_prob: float = 0.2,
+        selective_instance_segmentation: bool = True,
+        num_segmented_images: int = 5,
+        return_nonsegmented_images: bool = True,
     ):
         self.habitat_view_data = (
             habitat_view_ds.dataset
@@ -197,12 +206,21 @@ class HabitatLocationDataset(Dataset):
             else habitat_view_ds
         )
         self.habitat_view_dataset = habitat_view_ds
+        self._selective_segments = selective_instance_segmentation
+        if selective_instance_segmentation:
+            self._segmented_images = self.get_best_instance_segment_images(
+                num_segmented_images
+            )
+        else:
+            self._segmented_images = range(len(self.habitat_view_dataset))
         self.subsample_prob = subsample_prob
         self.image_extractor = self.habitat_view_data.image_extractor
         self.poses = self.image_extractor.poses
 
+        self._return_nonsegmented_images = return_nonsegmented_images
         self.coordinates = []
         self.semantic_label = []
+        self.instance_label = []
         self.rgb_data = []
         self.distance_data = []
         self.indices = []
@@ -230,6 +248,10 @@ class HabitatLocationDataset(Dataset):
         self._get_intrinsics()
         # Itereate over the view dataset to extract all possible object tags.
         for idx in tqdm.trange(len(self.habitat_view_dataset)):
+            # Only keep segmented images here
+            if not self._return_nonsegmented_images:
+                if idx not in self._segmented_images:
+                    continue
             data_dict = self.habitat_view_dataset[idx]
             depth_map = data_dict["depth"]
             frame_size = depth_map.shape[0]  # Assuming depth map is a square image.
@@ -244,21 +266,42 @@ class HabitatLocationDataset(Dataset):
             self.coordinates.append(
                 einops.rearrange(all_xyz, "d w h-> (w h) d")[subsampled]
             )
+            # Right now, using the ground truth semantic segmentation.
             self.semantic_label.append(
-                einops.rearrange(data_dict["truth"], "w h -> (w h)")[subsampled]
+                self._get_semantic_labels_from_image(data_dict, subsampled)
             )
+            # Only selectively give instance segmentation.
+            if idx in self._segmented_images:
+                self.instance_label.append(
+                    einops.rearrange(
+                        data_dict["instance_segmentation"], "w h -> (w h)"
+                    )[subsampled]
+                )
+            else:
+                # Fill it with -1s
+                self.instance_label.append(np.ones_like(self.semantic_label[-1]) * -1)
             self.rgb_data.append(
                 einops.rearrange(all_rgb, "w h d -> (w h) d")[subsampled]
             )
             self.indices.append(np.ones_like(self.semantic_label[-1]) * idx)
-            self.distance_data.append(
-                einops.rearrange(depth_map, "w h -> (w h)")[subsampled]
-            )
+            if not self._return_nonsegmented_images:
+                self.distance_data.append(
+                    einops.rearrange(torch.ones_like(depth_map) * 100, "w h -> (w h)")[
+                        subsampled
+                    ]
+                )
+            else:
+                self.distance_data.append(
+                    einops.rearrange(depth_map, "w h -> (w h)")[subsampled]
+                )
 
         # Now combine everything in one array.
         self.coordinates = torch.from_numpy(np.concatenate(self.coordinates, axis=0))
         self.semantic_label = torch.from_numpy(
             np.concatenate(self.semantic_label, axis=0)
+        )
+        self.instance_label = torch.from_numpy(
+            np.concatenate(self.instance_label, axis=0)
         )
         self.rgb_data = torch.from_numpy(np.concatenate(self.rgb_data, axis=0))
         self.distance_data = torch.from_numpy(
@@ -266,14 +309,48 @@ class HabitatLocationDataset(Dataset):
         )
         self.indices = torch.from_numpy(np.concatenate(self.indices, axis=0))
 
+    def _get_semantic_labels_from_image(self, current_image_data_dict, subsampled):
+        return einops.rearrange(
+            current_image_data_dict["semantic_segmentation"], "w h -> (w h)"
+        )[subsampled]
+
     def __len__(self):
         return len(self.coordinates)
 
     def __getitem__(self, idx):
         return {
             "xyz": self.coordinates[idx],
-            "label": self.semantic_label[idx],
             "rgb": self.rgb_data[idx],
+            "label": self.semantic_label[idx],
+            "instance": self.instance_label[idx],
             "img_idx": self.indices[idx],
             "distance": self.distance_data[idx],
         }
+
+    def get_best_instance_segment_images(self, num_segmented_image=5):
+        best_set_so_far = set()
+        chosen_images_so_far = set()
+        num_chosen_images = num_segmented_image
+        for _ in range(num_chosen_images):
+            best_set_index = -1
+            best_set_score = -1
+            for idx, data in enumerate(self.habitat_view_dataset):
+                current_new_set_under_consideration = set(
+                    torch.unique(data["instance_segmentation"]).tolist()
+                )
+                current_set_score = len(
+                    current_new_set_under_consideration - best_set_so_far
+                )
+                if current_set_score > best_set_score:
+                    best_set_score = current_set_score
+                    best_set_index = idx
+
+            chosen_images_so_far.add(best_set_index)
+            best_set_so_far = best_set_so_far | set(
+                torch.unique(
+                    self.habitat_view_dataset[best_set_index]["instance_segmentation"]
+                ).tolist()
+            )
+
+        chosen_images_so_far = list(chosen_images_so_far)
+        return chosen_images_so_far
