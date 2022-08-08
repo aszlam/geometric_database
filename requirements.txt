@@ -6,3 +6,7 @@ regex==2022.6.2
 tqdm==4.64.0
 point-transformer-pytorch==0.1.5
 sentence_transformers==2.2.2
+numpy-quaternion
+git+https://github.com/facebookresearch/detectron2.git
+pandas==1.4.3
+pyntcloud==0.3.1

@@ -9,7 +9,6 @@ import clip
 # Setup detectron2 logger
 import detectron2
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -24,7 +23,6 @@ setup_logger()
 
 import json
 import os
-import random
 
 # import some common libraries
 import sys
@@ -33,23 +31,30 @@ import cv2
 import numpy as np
 
 # import some common detectron2 utilities
-from detectron2 import model_zoo
-from detectron2.config import get_cfg
-from detectron2.data import DatasetCatalog, MetadataCatalog
+from detectron2.data import MetadataCatalog
 from detectron2.engine import DefaultPredictor
-from detectron2.utils.visualizer import Visualizer
+from detectron2.config import get_cfg
 
 # from google.colab.patches import cv2_imshow
-
 # Detic libraries
+# sys.path.insert(
+#     0, "/private/home/notmahi/code/geometric_database/Detic/third_party/CenterNet2/"
+# )
+# sys.path.insert(0, "/private/home/notmahi/code/geometric_database/Detic/")
+
 sys.path.insert(0, "/private/home/notmahi/code/Detic/third_party/CenterNet2/")
 sys.path.insert(0, "/private/home/notmahi/code/Detic/")
-from centernet.config import add_centernet_config
-from detic.config import add_detic_config
 from detic.modeling.utils import reset_cls_test
+from detic.config import add_detic_config
+
+# sys.path.insert(0, "/private/home/notmahi/code/Detic/")
+from centernet.config import add_centernet_config
+
 
 cfg = get_cfg()
 add_centernet_config(cfg)
+
+
 add_detic_config(cfg)
 cfg.merge_from_file(
     "/private/home/notmahi/code/Detic/configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml"
@@ -363,6 +368,8 @@ class RealWorldSemanticDataset:
 
     def export_to_rgb_pcd(self):
         # Export the RGB points to pointcloud format.
+        import pandas as pd
+
         df = pd.DataFrame(
             data=np.concatenate([self._surface_xyzs, self._rgbs], axis=-1),
             columns=["x", "y", "z", "red", "green", "blue"],
@@ -462,13 +469,13 @@ def get_voxel_normalized_sampler_and_occupied_voxels(xyz_locations, voxel_size=0
             voxel_counts.get(tuple(smoothed_point), 0) + 1
         )
     weight = []
-    for point in tqdm.tqdm(xyz_locations):
-        point = data_point.get("xyz")
-        if point is None:
-            point = data_point.get("xyz_position")
-        if isinstance(point, torch.Tensor):
-            point = point.numpy()
-        smoothed_point = (point / voxel_size).astype(int)
-        weight.append(1 / voxel_counts[tuple(smoothed_point)])
+    # for point in tqdm.tqdm(xyz_locations):
+    #     point = data_point.get("xyz")
+    #     if point is None:
+    #         point = data_point.get("xyz_position")
+    #     if isinstance(point, torch.Tensor):
+    #         point = point.numpy()
+    #     smoothed_point = (point / voxel_size).astype(int)
+    #     weight.append(1 / voxel_counts[tuple(smoothed_point)])
 
     return weight, len(voxel_counts)

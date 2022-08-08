@@ -1,3 +1,9 @@
 [submodule "diffusion"]
 	path = diffusion
 	url = https://github.com/Janspiry/Palette-Image-to-Image-Diffusion-Models.git
+[submodule "lang-seg"]
+	path = lang-seg
+	url = https://github.com/isl-org/lang-seg.git
+[submodule "Detic"]
+	path = Detic
+	url = https://github.com/facebookresearch/Detic.git

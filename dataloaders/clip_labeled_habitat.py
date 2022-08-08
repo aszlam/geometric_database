@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch.utils.data import Dataset, DataLoader
+from torchvision.transforms import Resize
 from dataloaders.habitat_loaders import HabitatLocationDataset, HabitatViewDataset
 from sentence_transformers import SentenceTransformer
 
@@ -33,6 +34,7 @@ class ClipLabelledLocation(Dataset):
         self._semantic_weight = torch.tensor(self._semantic_weight)
         self._id_to_clip_vector = {}
         self._view_to_clip_vector = {}
+        self.resize = Resize(224)  # CLIP model has a fixed size input
         self._setup_clip_vectors(
             model,
             sentence_model,
@@ -50,17 +52,6 @@ class ClipLabelledLocation(Dataset):
         for name in id_to_name.values():
             text_strings.append(self.PROMPT + name.replace("-", " "))
         text_strings.append(self.EMPTY)
-        # clip_tokens = clip.tokenize(text_strings)
-        # Now, encode them into Clip vectors.
-        # all_embedded_text = []
-        # with torch.no_grad():
-        #     for i in range(0, len(clip_tokens), batch_size):
-        #         start, end = i, min(i + batch_size, len(clip_tokens))
-        #         batch_data = clip_tokens[start:end].to(device)
-        #         embedded_text = clip_model.encode_text(batch_data).float()
-        #         embedded_text = F.normalize(embedded_text, p=2, dim=-1)
-        #         all_embedded_text.append(embedded_text.cpu())
-        # all_embedded_text = torch.cat(all_embedded_text)
         with torch.no_grad():
             all_embedded_text = sentence_model.encode(text_strings)
             all_embedded_text = torch.from_numpy(all_embedded_text).float()
@@ -81,7 +72,9 @@ class ClipLabelledLocation(Dataset):
         with torch.no_grad():
             for data_dict in dataloader:
                 rgb = einops.rearrange(data_dict["rgb"][..., :3], "b h w c -> b c h w")
-                clip_embeddings = clip_model.encode_image(rgb.to(device)).float().cpu()
+                clip_embeddings = (
+                    clip_model.encode_image(self.resize(rgb).to(device)).float().cpu()
+                )
                 all_clip_embeddings.append(clip_embeddings)
         all_clip_embeddings = torch.cat(all_clip_embeddings)
         self._image_embed_size = all_clip_embeddings.size(-1)
