@@ -3,6 +3,7 @@ notebooks
 outputs
 wandb
 training.log
+core
 
 # Slurm files
 *.sbatch
@@ -14,3 +15,6 @@ wrapper.sh
 *.egg-info
 build
 
+.cache
+.ipynb_checkpoints
+.pytest_cache
