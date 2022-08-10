@@ -1,4 +1,3 @@
-import glob
 import json
 import os
 from typing import Optional
@@ -14,6 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import tqdm
 from detectron2.utils.logger import setup_logger
+from pathlib import Path
 from PIL import Image
 from pyntcloud import PyntCloud
 from sentence_transformers import SentenceTransformer, util
@@ -35,19 +35,14 @@ from detectron2.data import MetadataCatalog
 from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 
-# from google.colab.patches import cv2_imshow
-# Detic libraries
-# sys.path.insert(
-#     0, "/private/home/notmahi/code/geometric_database/Detic/third_party/CenterNet2/"
-# )
-# sys.path.insert(0, "/private/home/notmahi/code/geometric_database/Detic/")
+DETIC_PATH = os.environ.get("DETIC_PATH", Path.home() / "code/Detic")
 
-sys.path.insert(0, "/private/home/notmahi/code/Detic/third_party/CenterNet2/")
-sys.path.insert(0, "/private/home/notmahi/code/Detic/")
+sys.path.insert(0, f"{DETIC_PATH}/third_party/CenterNet2/")
+sys.path.insert(0, f"{DETIC_PATH}/")
 from detic.modeling.utils import reset_cls_test
 from detic.config import add_detic_config
 
-# sys.path.insert(0, "/private/home/notmahi/code/Detic/")
+# sys.path.insert(0, f"{DETIC_PATH}/")
 from centernet.config import add_centernet_config
 
 
@@ -57,7 +52,7 @@ add_centernet_config(cfg)
 
 add_detic_config(cfg)
 cfg.merge_from_file(
-    "/private/home/notmahi/code/Detic/configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml"
+    f"{DETIC_PATH}/configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml"
 )
 cfg.MODEL.WEIGHTS = "https://dl.fbaipublicfiles.com/detic/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth"
 cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # set threshold for this model
@@ -66,7 +61,7 @@ cfg.MODEL.ROI_HEADS.ONE_CLASS_PER_PROPOSAL = (
     False  # For better visualization purpose. Set to False for all classes.
 )
 cfg.MODEL.ROI_BOX_HEAD.CAT_FREQ_PATH = (
-    "/private/home/notmahi/code/Detic/datasets/metadata/lvis_v1_train_cat_info.json"
+    f"{DETIC_PATH}/datasets/metadata/lvis_v1_train_cat_info.json"
 )
 # cfg.MODEL.DEVICE='cpu' # uncomment this to use cpu-only mode.
 predictor = DefaultPredictor(cfg)
@@ -74,10 +69,10 @@ predictor = DefaultPredictor(cfg)
 # Setup the model's vocabulary using build-in datasets
 
 BUILDIN_CLASSIFIER = {
-    "lvis": "/private/home/notmahi/code/Detic/datasets/metadata/lvis_v1_clip_a+cname.npy",
-    "objects365": "/private/home/notmahi/code/Detic/datasets/metadata/o365_clip_a+cnamefix.npy",
-    "openimages": "/private/home/notmahi/code/Detic/datasets/metadata/oid_clip_a+cname.npy",
-    "coco": "/private/home/notmahi/code/Detic/datasets/metadata/coco_clip_a+cname.npy",
+    "lvis": f"{DETIC_PATH}/datasets/metadata/lvis_v1_clip_a+cname.npy",
+    "objects365": f"{DETIC_PATH}/datasets/metadata/o365_clip_a+cnamefix.npy",
+    "openimages": f"{DETIC_PATH}/datasets/metadata/oid_clip_a+cname.npy",
+    "coco": f"{DETIC_PATH}/datasets/metadata/coco_clip_a+cname.npy",
 }
 
 BUILDIN_METADATA_PATH = {

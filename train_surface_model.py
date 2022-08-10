@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import tqdm
+from pathlib import Path
 from omegaconf import OmegaConf
 from torch.utils.data import ConcatDataset, DataLoader, RandomSampler, random_split
 
@@ -29,11 +30,11 @@ from implicit_models.implicit_mlp import ImplicitCLIPModel
 SCENE = "apartment_0"
 # Replace with the path to your scene file
 SCENE_FILEPATH = [
-    f"/private/home/notmahi/data/replica_dataset/{SCENE}/habitat/mesh_semantic.ply",
+    f"{Path.home()}/data/replica_dataset/{SCENE}/habitat/mesh_semantic.ply",
 ]
 
 REAL_SCENE_DIRECTORY = glob.glob(
-    "/private/home/notmahi/data/stretch_fairmont/trajectories/july10_fremont/bed2/"
+    f"{Path.home()}/data/stretch_fairmont/trajectories/july10_fremont/bed2/"
 )
 BATCH_SIZE = 256
 

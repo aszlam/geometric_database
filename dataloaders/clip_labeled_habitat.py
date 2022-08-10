@@ -1,9 +1,7 @@
-from cmd import PROMPT
 from typing import Dict, List
 import clip
 import einops
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 from torch.utils.data import Dataset, DataLoader
@@ -14,7 +12,8 @@ from sentence_transformers import SentenceTransformer
 
 class ClipLabelledLocation(Dataset):
     PROMPT = "A "
-    EMPTY = "Background"
+    EMPTY = "Other"
+    FAR_DISTANCE = 10.0
 
     def __init__(
         self,
@@ -26,7 +25,7 @@ class ClipLabelledLocation(Dataset):
         batch_size: int = 128,
     ):
         self.loc_dataset = location_dataset
-        model, preprocess = clip.load(clip_model_name, device=device)
+        model, _ = clip.load(clip_model_name, device=device)
         sentence_model = SentenceTransformer(
             sentence_encoding_model_name, device=device
         )
@@ -103,6 +102,7 @@ class ClipLabelledLocation(Dataset):
                 location_data["img_idx"].item(), None  # self._id_to_clip_vector[-1]
             ),
             "semantic_weight": self._semantic_weight,
+            "distance": self.FAR_DISTANCE,  # Image labels are slightly misleading, so we set it high
         }
         result.update(location_data)
         return result
