@@ -94,9 +94,8 @@ def custom_pose_extractor_factory(grid_subdivision_size=50, height_grids=0):
             new_poses = []
             height_low, height_high = -height_grids // 2, height_grids // 2 + 1
             for _, pose in enumerate(poses):
-                for camera_height, target_height in product(
-                    range(height_low, height_high), range(height_low, height_high)
-                ):
+                camera_height = 0
+                for target_height in range(height_low, height_high):
                     pos, cpi, filepath = pose
                     r1, c1 = pos
                     r2, c2 = cpi

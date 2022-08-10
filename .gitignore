@@ -8,6 +8,7 @@ core
 # Slurm files
 *.sbatch
 wrapper.sh
+multirun
 
 # C/C++ bindings files
 *.so

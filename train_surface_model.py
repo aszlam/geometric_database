@@ -406,6 +406,9 @@ def get_habitat_dataset(
     num_sem_segmented_images=NUM_SEM_SEGMENTED_IMAGES,
     num_web_segmented_images=NUM_WEB_SEGMENTED_IMAGES,
 ):
+    gt_segmentation_baseline = gt_segmentation_baseline or (
+        num_web_segmented_images == 0
+    )
     dataset = HabitatViewDataset(
         habitat_scenes=habitat_scenes,
         pose_extractor_grid_size=grid_size,
@@ -598,7 +601,7 @@ def main(cfg):
     )
 
     wandb.init(
-        project="implicit_clip_model",
+        project="implicit_semantic_model_grid",
         tags=[
             f"model/{cfg.model_type}",
         ],

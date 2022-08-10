@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - scene: frl_apt_1
+  - scene: apt_0
   - override hydra/launcher: submitit_slurm
 
 device: cuda
@@ -20,7 +20,7 @@ label_voxel_count: 3e6
 num_inst_segmented_images: 5
 num_sem_segmented_images: 50
 num_web_segmented_images: 300
-gt_segmentation_baseline: true
+gt_segmentation_baseline: false
 
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
 cache_only_run: false
@@ -38,6 +38,10 @@ hydra:
     dir: outputs/${scene.base}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}
   sweep:
     dir: multirun/${scene.base}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}
+  sweeper:
+    params:
+      num_sem_segmented_images: 0,6,12,24,48,96
+      num_web_segmented_images: 0,5,15,45,135,300
   launcher:
     timeout_min: 1440
     cpus_per_task: 10

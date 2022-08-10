@@ -6,8 +6,6 @@ if __name__ == "__main__":
     # Replace with the path to your scene file
     SCENE_FILEPATH = [
         "/private/home/notmahi/data/replica_dataset/room_0/habitat/mesh_semantic.ply",
-        # "/private/home/notmahi/data/replica_dataset/room_1/habitat/mesh_semantic.ply",
-        # "/private/home/notmahi/data/replica_dataset/room_2/habitat/mesh_semantic.ply",
     ]
     BATCH_SIZE = 6
 

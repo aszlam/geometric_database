@@ -79,7 +79,7 @@ class ImplicitCLIPModel(nn.Module):
         self.fourier_proj = FourierFeatures(
             input_dim=input_dim,
             fourier_embedding_dim=fourier_dim,
-            fourier_embedding_scale=1 / (2.0**2),
+            fourier_embedding_scale=1 / (2.0 ** 2),
         )
         self.trunk = MLP(
             input_dim=fourier_dim,
@@ -118,8 +118,6 @@ if __name__ == "__main__":
     # Replace with the path to your scene file
     SCENE_FILEPATH = [
         "/private/home/notmahi/data/replica_dataset/room_0/habitat/mesh_semantic.ply",
-        # "/private/home/notmahi/data/replica_dataset/room_1/habitat/mesh_semantic.ply",
-        # "/private/home/notmahi/data/replica_dataset/room_2/habitat/mesh_semantic.ply",
     ]
     GRID_SIZE = 20
     HEIGHT_LEVELS = 3
