@@ -189,33 +189,45 @@ class HabitatLocationDataset(Dataset):
     find object semantic ids as well as their positions.
     object_extraction_depth: along the ray between the camera pose and where it hits the wall
     it is empty.
+    selective_instance_segmentation: Only return instance segmentation for the top n images.
     """
 
     def __init__(
         self,
         habitat_view_ds: HabitatViewDataset,
-        object_extraction_depth: float = 0.5,
         subsample_prob: float = 0.2,
         selective_instance_segmentation: bool = True,
-        num_segmented_images: int = 5,
+        selective_semantic_segmentation: bool = True,
+        num_inst_segmented_images: int = 5,
+        num_sem_segmented_images: int = 100,
         return_nonsegmented_images: bool = True,
     ):
-        self.habitat_view_data = (
+        habitat_view_data = (
             habitat_view_ds.dataset
             if isinstance(habitat_view_ds, torch.utils.data.Subset)
             else habitat_view_ds
         )
-        self.habitat_view_dataset = habitat_view_ds
+        habitat_view_dataset = habitat_view_ds
+        dataset_len = len(habitat_view_dataset)
         self._selective_segments = selective_instance_segmentation
         if selective_instance_segmentation:
-            self._segmented_images = self.get_best_instance_segment_images(
-                num_segmented_images
+            self._inst_segmented_images = self.get_best_instance_segment_images(
+                habitat_view_ds, num_inst_segmented_images
             )
         else:
-            self._segmented_images = range(len(self.habitat_view_dataset))
+            self._inst_segmented_images = range(dataset_len)
+
+        if selective_semantic_segmentation and (dataset_len < num_sem_segmented_images):
+            self._sem_segmented_images = self.get_best_sem_segmented_images(
+                habitat_view_ds, num_segmented_images=num_sem_segmented_images
+            )
+        else:
+            self._sem_segmented_images = range(dataset_len)
+
         self.subsample_prob = subsample_prob
-        self.image_extractor = self.habitat_view_data.image_extractor
-        self.poses = self.image_extractor.poses
+        image_extractor = habitat_view_data.image_extractor
+        self.poses = image_extractor.poses
+        self.instance_id_to_name = image_extractor.instance_id_to_name
 
         self._return_nonsegmented_images = return_nonsegmented_images
         self.coordinates = []
@@ -225,15 +237,17 @@ class HabitatLocationDataset(Dataset):
         self.distance_data = []
         self.indices = []
 
-        self._extract_dataset()
+        # Precompute the camera intrinsics from the view dataset.
+        self._get_intrinsics(habitat_view_data)
+        self._extract_dataset(habitat_view_ds)
 
-    def _get_intrinsics(self):
+    def _get_intrinsics(self, habitat_view_data: HabitatViewDataset):
         """
         Returns the instrinsic matrix of the camera
         :return: the intrinsic matrix (shape: :math:`[3, 3]`)
         :rtype: np.ndarray
         """
-        image_size_x, image_size_y = self.habitat_view_data.image_size
+        image_size_x, image_size_y = habitat_view_data.image_size
         self.fx, self.fy, self.cx, self.cy = (
             image_size_x // 2,
             image_size_y // 2,
@@ -243,16 +257,21 @@ class HabitatLocationDataset(Dataset):
         Itc = np.array([[self.fx, 0, self.cx], [0, self.fy, self.cy], [0, 0, 1]])
         return Itc
 
-    def _extract_dataset(self):
-        # Precompute the camera intrinsics from the view dataset.
-        self._get_intrinsics()
+    def _extract_dataset(self, habitat_view_dataset):
+
         # Itereate over the view dataset to extract all possible object tags.
-        for idx in tqdm.trange(len(self.habitat_view_dataset)):
+        for idx in tqdm.trange(len(habitat_view_dataset)):
             # Only keep segmented images here
             if not self._return_nonsegmented_images:
-                if idx not in self._segmented_images:
+                if idx not in self._inst_segmented_images:
                     continue
-            data_dict = self.habitat_view_dataset[idx]
+            # index needs to either be in instance segmented or sem segmented images.
+            if (
+                idx not in self._inst_segmented_images
+                and idx not in self._sem_segmented_images
+            ):
+                continue
+            data_dict = habitat_view_dataset[idx]
             depth_map = data_dict["depth"]
             frame_size = depth_map.shape[0]  # Assuming depth map is a square image.
             # Only process a subsampled portion of the image.
@@ -271,7 +290,7 @@ class HabitatLocationDataset(Dataset):
                 self._get_semantic_labels_from_image(data_dict, subsampled)
             )
             # Only selectively give instance segmentation.
-            if idx in self._segmented_images:
+            if idx in self._inst_segmented_images:
                 self.instance_label.append(
                     einops.rearrange(
                         data_dict["instance_segmentation"], "w h -> (w h)"
@@ -309,6 +328,10 @@ class HabitatLocationDataset(Dataset):
         )
         self.indices = torch.from_numpy(np.concatenate(self.indices, axis=0))
 
+        # Now, figure out the maximum and minimum coordinates.
+        self.max_coords, _ = torch.max(self.coordinates, dim=0)
+        self.min_coords, _ = torch.min(self.coordinates, dim=0)
+
     def _get_semantic_labels_from_image(self, current_image_data_dict, subsampled):
         return einops.rearrange(
             current_image_data_dict["semantic_segmentation"], "w h -> (w h)"
@@ -327,17 +350,25 @@ class HabitatLocationDataset(Dataset):
             "distance": self.distance_data[idx],
         }
 
-    def get_best_instance_segment_images(self, num_segmented_image=5):
+    def get_best_instance_segment_images(
+        self, habitat_view_dataset, num_segmented_image=5
+    ):
         best_set_so_far = set()
         chosen_images_so_far = set()
         num_chosen_images = num_segmented_image
+        dataset = habitat_view_dataset
+        unique_sets = [
+            set(torch.unique(dataset[idx]["instance_segmentation"]).tolist())
+            for idx in range(len(dataset))
+        ]
         for _ in range(num_chosen_images):
             best_set_index = -1
             best_set_score = -1
-            for idx, data in enumerate(self.habitat_view_dataset):
-                current_new_set_under_consideration = set(
-                    torch.unique(data["instance_segmentation"]).tolist()
-                )
+            for idx in range(len(dataset)):
+                if idx in chosen_images_so_far:
+                    # Only consider new images.
+                    continue
+                current_new_set_under_consideration = unique_sets[idx]
                 current_set_score = len(
                     current_new_set_under_consideration - best_set_so_far
                 )
@@ -346,11 +377,21 @@ class HabitatLocationDataset(Dataset):
                     best_set_index = idx
 
             chosen_images_so_far.add(best_set_index)
-            best_set_so_far = best_set_so_far | set(
-                torch.unique(
-                    self.habitat_view_dataset[best_set_index]["instance_segmentation"]
-                ).tolist()
-            )
+            best_set_so_far = best_set_so_far | unique_sets[best_set_index]
 
         chosen_images_so_far = list(chosen_images_so_far)
         return chosen_images_so_far
+
+    def get_best_sem_segmented_images(
+        self, habitat_view_dataset, num_segmented_images=50
+    ):
+        dataset = habitat_view_dataset
+        # Using depth as a proxy for object diversity in a scene.
+        num_objects_and_images = [
+            (dataset[idx]["depth"].max() - dataset[idx]["depth"].min(), idx)
+            for idx in range(len(dataset))
+        ]
+        sorted_num_object_and_img = sorted(
+            num_objects_and_images, key=lambda x: x[0], reverse=True
+        )
+        return [x[1] for x in sorted_num_object_and_img[:num_segmented_images]]

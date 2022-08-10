@@ -1,4 +1,5 @@
-from typing import Dict
+from cmd import PROMPT
+from typing import Dict, List
 import clip
 import einops
 import torch
@@ -17,6 +18,7 @@ class ClipLabelledLocation(Dataset):
 
     def __init__(
         self,
+        view_dataset: HabitatViewDataset,
         location_dataset: HabitatLocationDataset,
         clip_model_name: str = "ViT-B/32",
         sentence_encoding_model_name="all-mpnet-base-v2",
@@ -38,13 +40,20 @@ class ClipLabelledLocation(Dataset):
         self._setup_clip_vectors(
             model,
             sentence_model,
-            self.loc_dataset.image_extractor.instance_id_to_name,
+            view_dataset,
+            self.loc_dataset.instance_id_to_name,
             batch_size,
             device,
         )
 
     def _setup_clip_vectors(
-        self, clip_model, sentence_model, id_to_name: Dict, batch_size: int, device: str
+        self,
+        clip_model,
+        sentence_model,
+        habitat_view_ds: HabitatViewDataset,
+        id_to_name: Dict,
+        batch_size: int,
+        device: str,
     ):
         # Step 1: set up all the clip vectors for the tags.
         # Tokenize all the names.
@@ -63,7 +72,6 @@ class ClipLabelledLocation(Dataset):
         self._id_to_clip_vector[-1] = all_embedded_text[-1]
 
         # Step 2: set up clip vector for every view images.
-        habitat_view_ds = self.loc_dataset.habitat_view_dataset
         # set up dataloader
         all_clip_embeddings = []
         dataloader = DataLoader(
@@ -106,3 +114,61 @@ class ClipLabelledLocation(Dataset):
     @property
     def text_representation_size(self):
         return self._text_embed_size
+
+    @property
+    def coordinate_range(self):
+        return self.loc_dataset.max_coords, self.loc_dataset.min_coords
+
+
+class ClassificationExtractor:
+    PROMPT = "A "
+    EMPTY_CLASS = "Other"
+    LOGIT_TEMP = 100.0
+
+    def __init__(
+        self,
+        clip_model_name: str,
+        sentence_model_name: str,
+        class_names: List[str],
+        device: str = "cuda",
+    ):
+        clip_model, _ = clip.load(clip_model_name, device=device)
+        sentence_model = SentenceTransformer(sentence_model_name, device=device)
+
+        # Adding this class in the beginning since the labels are 1-indexed.
+        text_strings = [self.EMPTY_CLASS]
+        for name in class_names:
+            text_strings.append(self.PROMPT + name.replace("-", " ").replace("_", " "))
+        with torch.no_grad():
+            all_embedded_text = sentence_model.encode(text_strings)
+            all_embedded_text = torch.from_numpy(all_embedded_text).float().to(device)
+
+        with torch.no_grad():
+            text = clip.tokenize(text_strings).to(device)
+            clip_encoded_text = clip_model.encode_text(text).float().to(device)
+
+        self._sentence_embed_size = all_embedded_text.size(-1)
+        self._clip_embed_size = clip_encoded_text.size(-1)
+
+        self._sentence_features = F.normalize(all_embedded_text, p=2, dim=-1)
+        self._clip_text_features = F.normalize(clip_encoded_text, p=2, dim=-1)
+
+    def calculate_classifications(
+        self, model_text_features: torch.Tensor, model_image_features: torch.Tensor
+    ):
+        # Figure out the classification given the learned embedding of the objects.
+        assert model_text_features.size(-1) == self._sentence_embed_size
+        assert model_image_features.size(-1) == self._clip_embed_size
+
+        # Now do the softmax over the classes.
+        model_text_features = F.normalize(model_text_features, p=2, dim=-1)
+        model_image_features = F.normalize(model_image_features, p=2, dim=-1)
+
+        text_logits = model_text_features @ self._sentence_features.T
+        image_logits = model_image_features @ self._clip_text_features.T
+
+        # Figure out sum of probabilities.
+        return (
+            F.softmax(self.LOGIT_TEMP * text_logits, dim=-1)
+            + F.softmax(self.LOGIT_TEMP * image_logits, dim=-1)
+        ) / 2.0

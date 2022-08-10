@@ -1,36 +1,30 @@
-import hydra
-import logging
-from dataloaders.habitat_loaders import HabitatViewDataset, HabitatLocationDataset
-from dataloaders.clip_labeled_habitat import ClipLabelledLocation
-
-from dataloaders.clip_labeled_real_world import (
-    RealWorldSemanticDataset,
-    RealWorldClipDataset,
-    RealWorldSurfaceDataset,
-    get_voxel_normalized_sampler_and_occupied_voxels,
-)
-from dataloaders.detic_labeled_habitat import DeticDenseLabelledDataset
-import tqdm
-from torch.utils.data import (
-    DataLoader,
-    random_split,
-    RandomSampler,
-    ConcatDataset,
-)
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-from utils.mlp import MLP
-from models.scene_models.positional_encoding import FourierFeatures
-from implicit_models.implicit_mlp import ImplicitCLIPModel
-from implicit_models.grid_hash_model import GridCLIPModel
 import glob
+import logging
 import os
-import einops
+import random
 
+import hydra
+import numpy as np
+import torch
+import torch.nn.functional as F
+import tqdm
+from omegaconf import OmegaConf
+from torch.utils.data import ConcatDataset, DataLoader, RandomSampler, random_split
 
 import wandb
+from dataloaders.clip_labeled_habitat import (
+    ClassificationExtractor,
+    ClipLabelledLocation,
+)
+from dataloaders.clip_labeled_real_world import (
+    RealWorldClipDataset,
+    RealWorldSemanticDataset,
+    RealWorldSurfaceDataset,
+)
+from dataloaders.detic_labeled_habitat import DeticDenseLabelledDataset
+from dataloaders.habitat_loaders import HabitatLocationDataset, HabitatViewDataset
+from implicit_models.grid_hash_model import GridCLIPModel
+from implicit_models.implicit_mlp import ImplicitCLIPModel
 
 SCENE = "apartment_0"
 # Replace with the path to your scene file
@@ -60,15 +54,27 @@ EVAL_EVERY = 5
 SURFACE_LOSS_LAMBDA = 10.0
 INSTANCE_LOSS_SCALE = 5.0
 GRID_SIZE = 8
+NUM_INSTANCE_SEGMENTED_IMAGES = 5
+NUM_SEM_SEGMENTED_IMAGES = 50
+NUM_WEB_SEGMENTED_IMAGES = 300
 
 MODEL_TYPE = "hash"  # MLP or hash
 CACHE = True
+
+
+def seed_everything(seed: int):
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
 
 
 def train(
     clip_train_loader,
     labelling_model,
     optim,
+    classifier: ClassificationExtractor,
     device=DEVICE,
     exp_decay_coeff=EXP_DECAY_COEFF,
     image_to_label_loss_ratio=IMAGE_TO_LABEL_CLIP_LOSS_SCALE,
@@ -78,9 +84,13 @@ def train(
     total_loss = 0
     label_loss = 0
     image_loss = 0
+    classification_loss = 0
+    classification_accuracy = 0
     total_inst_segmentation_loss = 0
     total_accuracy = 0
     total_samples = 0
+    total_classification_loss = 0
+    total_classification_accuracy = 0
     labelling_model.train()
     total = len(clip_train_loader)
     for clip_data_dict in tqdm.tqdm(clip_train_loader, total=total):
@@ -147,7 +157,6 @@ def train(
         del (
             image_label_mask,
             image_label_index,
-            language_label_index,
             language_label_mask,
         )
         instance_mask = instances != -1
@@ -168,7 +177,31 @@ def train(
             inst_segmentation_loss = torch.zeros_like(contrastive_loss_images)
             accuracy = 1.0
 
+        # Now figure out semantic segmentation.
+        with torch.no_grad():
+            class_probs = classifier.calculate_classifications(
+                model_text_features=predicted_label_latents,
+                model_image_features=predicted_image_latents,
+            )
+            # Now figure out semantic accuracy and loss.
+            semseg_mask = (language_label_index != 0).squeeze(-1)
+            if not torch.any(semseg_mask):
+                classification_loss = 0
+                classification_accuracy = 1.0
+            else:
+                # Figure out the right classes.
+                masked_class_prob = class_probs[semseg_mask]
+                masked_labels = language_label_index[semseg_mask].squeeze(-1)
+                classification_accuracy = (
+                    (masked_class_prob.argmax(dim=-1) == masked_labels).float().mean()
+                )
+                classification_loss = F.cross_entropy(
+                    torch.log(masked_class_prob),
+                    masked_labels,
+                )
+
         total_accuracy += accuracy
+        total_classification_accuracy += classification_accuracy
         contrastive_loss = (
             image_to_label_loss_ratio * contrastive_loss_images
             + label_to_image_loss_ratio * contrastive_loss_labels
@@ -177,10 +210,10 @@ def train(
         final_loss = contrastive_loss
         final_loss.backward()
         optim.step()
-        # surface_loss += loss.detach().cpu().item()
         label_loss += contrastive_loss_labels.detach().cpu().item()
         image_loss += contrastive_loss_images.detach().cpu().item()
         total_inst_segmentation_loss += inst_segmentation_loss.detach().cpu().item()
+        total_classification_loss += classification_loss.detach().cpu().item()
         total_loss += final_loss.detach().cpu().item()
         total_samples += 1
         wandb.log(
@@ -189,6 +222,8 @@ def train(
                 "train/contrastive_loss_images": contrastive_loss_images,
                 "train/instance_loss": inst_segmentation_loss,
                 "train/instance_accuracy": accuracy,
+                "train/semseg_loss": classification_loss,
+                "train/semseg_accuracy": classification_accuracy,
                 "train/loss_sum": final_loss,
                 "train/image_label_ratio": image_label_ratio,
                 "train/lang_label_ratio": lang_label_ratio,
@@ -201,6 +236,8 @@ def train(
             "train_avg/contrastive_loss_images": image_loss / total_samples,
             "train_avg/instance_loss": total_inst_segmentation_loss / total_samples,
             "train_avg/instance_accuracy": total_accuracy / total_samples,
+            "train_avg/semseg_loss": total_classification_loss / total_samples,
+            "train_avg/semseg_accuracy": total_classification_accuracy / total_samples,
             "train_avg/loss_sum": total_loss / total_samples,
             "train_avg/labelling_temp": torch.exp(
                 labelling_model.temperature.data.detach()
@@ -212,7 +249,8 @@ def train(
 def test(
     clip_test_loader,
     labelling_model,
-    epoch,
+    epoch: int,
+    classifier: ClassificationExtractor,
     device=DEVICE,
     exp_decay_coeff=EXP_DECAY_COEFF,
     image_to_label_loss_ratio=IMAGE_TO_LABEL_CLIP_LOSS_SCALE,
@@ -227,6 +265,10 @@ def test(
         label_loss = 0
         image_loss = 0
         total_acc = 0
+        classification_loss = 0
+        classification_accuracy = 0
+        total_classification_loss = 0
+        total_classification_accuracy = 0
         total_inst_segmentation_loss = 0
         for clip_data_dict in clip_test_loader:
             xyzs = clip_data_dict["xyz"].to(device)
@@ -284,9 +326,30 @@ def test(
             del (
                 image_label_mask,
                 image_label_index,
-                language_label_index,
                 language_label_mask,
             )
+
+            class_probs = classifier.calculate_classifications(
+                model_text_features=predicted_label_latents,
+                model_image_features=predicted_image_latents,
+            )
+            # Now figure out semantic accuracy and loss.
+            semseg_mask = (language_label_index != 0).squeeze(-1)
+            if not torch.any(semseg_mask):
+                classification_loss = 0
+                classification_accuracy = 1.0
+            else:
+                # Figure out the right classes.
+                masked_class_prob = class_probs[semseg_mask]
+                masked_labels = language_label_index[semseg_mask].squeeze(-1)
+                classification_accuracy = (
+                    (masked_class_prob.argmax(dim=-1) == masked_labels).float().mean()
+                )
+                classification_loss = F.cross_entropy(
+                    torch.log(masked_class_prob),
+                    masked_labels,
+                )
+
             contrastive_loss = (
                 image_to_label_loss_ratio * contrastive_loss_images
                 + label_to_image_loss_ratio * contrastive_loss_labels
@@ -307,6 +370,8 @@ def test(
                     "test/contrastive_loss_image": contrastive_loss_images,
                     "test/instance_loss": inst_segmentation_loss,
                     "test/instance_accuracy": accuracy,
+                    "test/semseg_loss": classification_loss,
+                    "test/semseg_accuracy": classification_accuracy,
                     "test/loss_sum": final_loss,
                 }
             )
@@ -317,6 +382,8 @@ def test(
             "test_avg/contrastive_loss_image": image_loss / total_samples,
             "test_avg/instance_loss": total_inst_segmentation_loss / total_samples,
             "test_avg/instance_accuracy": total_acc / total_samples,
+            "test_avg/semseg_loss": total_classification_loss / total_samples,
+            "test_avg/semseg_accuracy": total_classification_accuracy / total_samples,
             "test_avg/loss_sum": total_loss / total_samples,
         }
     )
@@ -333,6 +400,10 @@ def get_habitat_dataset(
     image_size=IMAGE_SIZE,
     use_cache=CACHE,
     point_subsample_prob=SUBSAMPLE_PROB,
+    gt_segmentation_baseline=False,
+    num_inst_segmented_images=NUM_INSTANCE_SEGMENTED_IMAGES,
+    num_sem_segmented_images=NUM_SEM_SEGMENTED_IMAGES,
+    num_web_segmented_images=NUM_WEB_SEGMENTED_IMAGES,
 ):
     dataset = HabitatViewDataset(
         habitat_scenes=habitat_scenes,
@@ -345,35 +416,66 @@ def get_habitat_dataset(
         dataset,
         lengths=[train_split_size, len(dataset) - train_split_size],
     )
-    if use_cache:
-        cache_fp = (
-            f".cache/lseg_labeled_dataset_{base_scene}_{grid_size}_{image_size}.pt"
-        )
+    if use_cache and not gt_segmentation_baseline:
+        cache_fp = f".cache/lseg_labeled_dataset_{base_scene}_{grid_size}_{image_size}_{num_web_segmented_images}.pt"
         if os.path.exists(cache_fp):
             location_train_dataset_1 = torch.load(cache_fp)
         else:
             location_train_dataset_1 = DeticDenseLabelledDataset(
-                view_train_dataset,
+                view_train_dataset, num_images_to_label=num_web_segmented_images
             )
             torch.save(location_train_dataset_1, cache_fp)
     # Now we will have to create more dataloaders for the CLIP dataset.
-    location_train_dataset = HabitatLocationDataset(
-        habitat_view_ds=view_train_dataset,
-        subsample_prob=point_subsample_prob,
-        return_nonsegmented_images=False,
+    if use_cache:
+        cache_fp = f".cache/habitat_gt_dataset_{base_scene}_{grid_size}_{image_size}_{num_inst_segmented_images}_{num_sem_segmented_images}.pt"
+        if os.path.exists(cache_fp):
+            clip_train_dataset = torch.load(cache_fp)
+        else:
+            location_train_dataset = HabitatLocationDataset(
+                habitat_view_ds=view_train_dataset,
+                subsample_prob=point_subsample_prob,
+                return_nonsegmented_images=gt_segmentation_baseline,
+                num_inst_segmented_images=num_inst_segmented_images,
+                num_sem_segmented_images=num_sem_segmented_images
+                # In the GT segmentation baseline, we get all image segmentation data.
+            )
+            # Convert to clip datasets
+            clip_train_dataset = ClipLabelledLocation(
+                view_train_dataset, location_train_dataset
+            )
+            torch.save(clip_train_dataset, cache_fp)
+
+    if use_cache:
+        cache_fp = (
+            f".cache/habitat_gt_dataset_test_{base_scene}_{grid_size}_{image_size}.pt"
+        )
+        if os.path.exists(cache_fp):
+            clip_test_dataset = torch.load(cache_fp)
+        else:
+            location_test_dataset = HabitatLocationDataset(
+                habitat_view_ds=view_test_dataset,
+                subsample_prob=point_subsample_prob,
+                selective_instance_segmentation=False,
+                selective_semantic_segmentation=False,
+                # Return segmentation for all images in test.
+            )
+            clip_test_dataset = ClipLabelledLocation(
+                view_test_dataset, location_test_dataset
+            )
+            torch.save(clip_test_dataset, cache_fp)
+
+    if not gt_segmentation_baseline:
+        clip_train_dataset_concat = ConcatDataset(
+            [clip_train_dataset, location_train_dataset_1]
+        )
+    else:
+        clip_train_dataset_concat = clip_train_dataset
+    return (
+        list(dataset._id_to_name.values()),
+        clip_train_dataset,
+        clip_train_dataset_concat,
+        clip_test_dataset,
     )
-    location_test_dataset = HabitatLocationDataset(
-        habitat_view_ds=view_test_dataset,
-        subsample_prob=point_subsample_prob,
-        selective_instance_segmentation=False,
-    )
-    # Convert to clip datasets
-    clip_train_dataset = ClipLabelledLocation(location_train_dataset)
-    clip_test_dataset = ClipLabelledLocation(location_test_dataset)
-    clip_train_dataset_concat = ConcatDataset(
-        [clip_train_dataset, location_train_dataset_1]
-    )
-    return (clip_train_dataset, clip_train_dataset_concat, clip_test_dataset)
 
 
 def get_real_dataset():
@@ -406,29 +508,65 @@ def get_real_dataset():
 
 @hydra.main(version_base="1.2", config_path="configs", config_name="train.yaml")
 def main(cfg):
+    seed_everything(cfg.seed)
     # Run basic sanity test on the dataloader.
-    (parent_dataset, clip_train_dataset, clip_test_dataset,) = get_habitat_dataset(
+    (
+        label_set,
+        parent_dataset,
+        clip_train_dataset,
+        clip_test_dataset,
+    ) = get_habitat_dataset(
         base_scene=cfg.scene.base,
         habitat_scenes=cfg.scene.filepath,
         grid_size=cfg.scene.grid_size,
         image_size=cfg.scene.image_size,
         use_cache=cfg.use_cache,
         point_subsample_prob=cfg.scene.subsample_prob,
+        gt_segmentation_baseline=cfg.gt_segmentation_baseline,
+        num_inst_segmented_images=cfg.num_inst_segmented_images,
+        num_sem_segmented_images=cfg.num_sem_segmented_images,
+        num_web_segmented_images=cfg.num_web_segmented_images,
     )
+    if cfg.cache_only_run:
+        # Caching is done, so we can exit now.
+        exit(0)
+    # Setup our model with min and max coordinates.
+    max_coords, _ = torch.stack(
+        [
+            x[0]
+            for x in (
+                clip_train_dataset.coordinate_range,
+                clip_test_dataset.coordinate_range,
+            )
+        ]
+    ).max(0)
+    min_coords, _ = torch.stack(
+        [
+            x[1]
+            for x in (
+                clip_train_dataset.coordinate_range,
+                clip_test_dataset.coordinate_range,
+            )
+        ]
+    ).min(0)
+    logging.info(f"Environment bounds: max {max_coords} min {min_coords}")
 
+    classifier = ClassificationExtractor(
+        clip_model_name=cfg.web_models.clip,
+        sentence_model_name=cfg.web_models.sentence,
+        class_names=label_set,
+        device=cfg.device,
+    )
     if cfg.model_type == "MLP":
         labelling_model = ImplicitCLIPModel()
     elif cfg.model_type == "hash":
         labelling_model = GridCLIPModel(
             image_rep_size=parent_dataset.image_representation_size,
             text_rep_size=parent_dataset.text_representation_size,
+            max_coords=max_coords,
+            min_coords=min_coords,
         )
-    # Now, make the dataloader weights
-    # (_, label_voxel_count) = get_voxel_normalized_sampler_and_occupied_voxels(
-    #     clip_train_dataset
-    # )
     label_voxel_count = int(cfg.label_voxel_count)
-    print(f"Active voxel count: {label_voxel_count}")
     label_sampler = RandomSampler(
         data_source=clip_train_dataset,
         num_samples=label_voxel_count,
@@ -463,6 +601,7 @@ def main(cfg):
         tags=[
             f"model/{cfg.model_type}",
         ],
+        config=OmegaConf.to_container(cfg, resolve=True),
     )
 
     save_directory = cfg.save_directory.format(cfg.scene.base)
@@ -476,6 +615,7 @@ def main(cfg):
             clip_train_loader,
             labelling_model,
             optim,
+            classifier,
             cfg.device,
             exp_decay_coeff=cfg.exp_decay_coeff,
             image_to_label_loss_ratio=cfg.image_to_label_loss_ratio,
@@ -487,6 +627,7 @@ def main(cfg):
                 clip_test_loader,
                 labelling_model,
                 epoch,
+                classifier,
                 cfg.device,
                 exp_decay_coeff=cfg.exp_decay_coeff,
                 image_to_label_loss_ratio=cfg.image_to_label_loss_ratio,

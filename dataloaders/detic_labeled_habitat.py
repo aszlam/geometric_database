@@ -1,55 +1,27 @@
-from typing import Dict
 import clip
 import einops
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 from torch.utils.data import Dataset, DataLoader
-from dataloaders.habitat_loaders import HabitatLocationDataset, HabitatViewDataset
+from dataloaders.habitat_loaders import HabitatViewDataset
 from sentence_transformers import SentenceTransformer
-
-
-import glob
-import json
-import os
-from typing import Optional
-
-import clip
 
 # Some basic setup:
 # Setup detectron2 logger
-import detectron2
-import numpy as np
-import pandas as pd
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import tqdm
 from detectron2.utils.logger import setup_logger
-from PIL import Image
-from pyntcloud import PyntCloud
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import SentenceTransformer
 from torch.utils.data import Dataset
 
 setup_logger()
 
-import json
-import os
-import random
-
 # import some common libraries
 import sys
 
-import cv2
-import numpy as np
-
 # import some common detectron2 utilities
-from detectron2 import model_zoo
 from detectron2.config import get_cfg
-from detectron2.data import DatasetCatalog, MetadataCatalog
+from detectron2.data import MetadataCatalog
 from detectron2.engine import DefaultPredictor
-from detectron2.utils.visualizer import Visualizer
 
 # from google.colab.patches import cv2_imshow
 sys.path.insert(0, "/private/home/notmahi/code/geometric_database/lang-seg/")
@@ -101,9 +73,6 @@ BUILDIN_METADATA_PATH = {
 
 vocabulary = "lvis"  # change to 'lvis', 'objects365', 'openimages', or 'coco'
 metadata = MetadataCatalog.get(BUILDIN_METADATA_PATH[vocabulary])
-# classifier = BUILDIN_CLASSIFIER[vocabulary]
-# num_classes = len(metadata.thing_classes)
-# reset_cls_test(predictor.model, classifier, num_classes)
 
 
 def get_clip_embeddings(vocabulary, prompt="a "):
@@ -121,8 +90,9 @@ class DeticDenseLabelledDataset(Dataset):
         clip_model_name: str = "ViT-B/32",
         sentence_encoding_model_name="all-mpnet-base-v2",
         device: str = "cuda",
-        batch_size: int = 4,
+        batch_size: int = 1,
         detic_threshold: float = 0.3,
+        num_images_to_label: int = 300,
     ):
         dataset = habitat_view_dataset
 
@@ -148,17 +118,35 @@ class DeticDenseLabelledDataset(Dataset):
         self._image_features = []
         self._distance = []
         # Now, set up all the points and their labels.
+        images_to_label = self.get_best_sem_segmented_images(
+            dataset, num_images_to_label
+        )
         # First, setup detic with the combined classes.
         self._setup_detic_all_classes(habitat_view_data)
-        self._setup_detic_dense_labels(dataset, clip_model, sentence_model)
-
-    def _setup_detic_dense_labels(self, dataset, clip_model, sentence_model):
-        # Now just iterate over the images and do Detic preprocessing.
-        dataloader = DataLoader(
-            dataset, batch_size=self._batch_size, shuffle=False, pin_memory=False
+        self._setup_detic_dense_labels(
+            dataset, images_to_label, clip_model, sentence_model
         )
+
+    def get_best_sem_segmented_images(self, dataset, num_images_to_label=300):
+        # Using depth as a proxy for object diversity in a scene.
+        num_objects_and_images = [
+            (dataset[idx]["depth"].max() - dataset[idx]["depth"].min(), idx)
+            for idx in range(len(dataset))
+        ]
+        sorted_num_object_and_img = sorted(
+            num_objects_and_images, key=lambda x: x[0], reverse=True
+        )
+        return [x[1] for x in sorted_num_object_and_img[:num_images_to_label]]
+
+    def _setup_detic_dense_labels(
+        self, dataset, images_to_label, clip_model, sentence_model
+    ):
+        # Now just iterate over the images and do Detic preprocessing.
+        dataloader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=False)
         label_idx = 0
-        for data_dict in tqdm.tqdm(dataloader):
+        for idx, data_dict in tqdm.tqdm(enumerate(dataloader), total=len(dataset)):
+            if idx not in images_to_label:
+                continue
             rgb = einops.rearrange(data_dict["rgb"][..., :3], "b h w c -> b c h w")
             xyz = data_dict["xyz_position"]
             for image, coordinates in zip(rgb, xyz):
@@ -200,7 +188,9 @@ class DeticDenseLabelledDataset(Dataset):
         # Now, get to LSeg
         # First delete leftover Detic predictors
         self._setup_lseg()
-        for data_dict in tqdm.tqdm(dataloader):
+        for idx, data_dict in tqdm.tqdm(enumerate(dataloader), total=len(dataset)):
+            if idx not in images_to_label:
+                continue
             rgb = einops.rearrange(data_dict["rgb"][..., :3], "b h w c -> b c h w")
             xyz = data_dict["xyz_position"]
             for image, coordinates in zip(rgb, xyz):
@@ -217,7 +207,9 @@ class DeticDenseLabelledDataset(Dataset):
                     predicts = [torch.max(output, 1)[1].cpu() for output in outputs]
                 predict = predicts[0]
 
-                reshaped_coordinates = einops.rearrange(self.resize(coordinates), "c h w -> h w c")
+                reshaped_coordinates = einops.rearrange(
+                    self.resize(coordinates), "c h w -> h w c"
+                )
                 reshaped_rgb = einops.rearrange(self.resize(image), "c h w -> h w c")
 
                 for label in range(self._num_true_lseg_classes):
@@ -289,7 +281,6 @@ class DeticDenseLabelledDataset(Dataset):
         return len(self._label_xyz)
 
     def _setup_detic_all_classes(self, habitat_view_data):
-        vocabulary = "custom"
         predictor = DefaultPredictor(cfg)
         self._all_classes = metadata.thing_classes + list(
             habitat_view_data._id_to_name.values()
@@ -342,7 +333,7 @@ class DeticDenseLabelledDataset(Dataset):
             no_batchnorm=False,
             widehead=True,
             widehead_hr=False,
-            map_locatin="cuda",
+            map_locatin=self._device,
             arch_option=0,
             block_depth=0,
             activation="lrelu",
@@ -355,7 +346,7 @@ class DeticDenseLabelledDataset(Dataset):
             model = self.module
 
         model = model.eval()
-        model = model.cuda()
+        model = model.to(self._device)
         self.scales = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75]
 
         model.mean = [0.5, 0.5, 0.5]
@@ -364,7 +355,7 @@ class DeticDenseLabelledDataset(Dataset):
         self.transform = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         self.resize = transforms.Resize(224)
 
-        self.evaluator = LSeg_MultiEvalModule(
-            model, scales=self.scales, flip=True
-        ).cuda()
+        self.evaluator = LSeg_MultiEvalModule(model, scales=self.scales, flip=True).to(
+            self._device
+        )
         self.evaluator = self.evaluator.eval()
