@@ -185,14 +185,17 @@ def train(
                 model_image_features=predicted_image_latents,
             )
             # Now figure out semantic accuracy and loss.
-            semseg_mask = (language_label_index != 0).squeeze(-1)
+            semseg_mask = torch.logical_and(
+                language_label_index != 0,
+                language_label_index < classifier.total_label_classes,
+            ).squeeze(-1)
             if not torch.any(semseg_mask):
                 classification_loss = 0
                 classification_accuracy = 1.0
             else:
                 # Figure out the right classes.
                 masked_class_prob = class_probs[semseg_mask]
-                masked_labels = language_label_index[semseg_mask].squeeze(-1)
+                masked_labels = language_label_index[semseg_mask].squeeze(-1).long()
                 classification_accuracy = (
                     (masked_class_prob.argmax(dim=-1) == masked_labels).float().mean()
                 )
@@ -335,14 +338,17 @@ def test(
                 model_image_features=predicted_image_latents,
             )
             # Now figure out semantic accuracy and loss.
-            semseg_mask = (language_label_index != 0).squeeze(-1)
+            semseg_mask = torch.logical_and(
+                language_label_index != 0,
+                language_label_index < classifier.total_label_classes,
+            ).squeeze(-1)
             if not torch.any(semseg_mask):
-                classification_loss = 0
+                classification_loss = torch.zeros_like(contrastive_loss_images)
                 classification_accuracy = 1.0
             else:
                 # Figure out the right classes.
                 masked_class_prob = class_probs[semseg_mask]
-                masked_labels = language_label_index[semseg_mask].squeeze(-1)
+                masked_labels = language_label_index[semseg_mask].squeeze(-1).long()
                 classification_accuracy = (
                     (masked_class_prob.argmax(dim=-1) == masked_labels).float().mean()
                 )
@@ -363,6 +369,8 @@ def test(
             total_loss += final_loss.cpu().item()
             total_inst_segmentation_loss += inst_segmentation_loss.cpu().item()
             total_acc += accuracy
+            total_classification_accuracy += classification_accuracy
+            total_classification_loss += classification_loss.detach().cpu().item()
             total_samples += 1
 
             wandb.log(
@@ -392,6 +400,10 @@ def test(
         labelling_model,
         f"outputs/implicit_models/{save_directory}/implicit_scene_label_model_{epoch}.pt",
     )
+    torch.save(
+        labelling_model,
+        f"outputs/implicit_models/{save_directory}/implicit_scene_label_model_latest.pt",
+    )
 
 
 def get_habitat_dataset(
@@ -415,6 +427,7 @@ def get_habitat_dataset(
         image_size=(image_size, image_size),
         height_levels=0,
     )
+    id_to_name = dataset._id_to_name
     train_split_size = len(dataset) // 2
     view_train_dataset, view_test_dataset = random_split(
         dataset,
@@ -445,7 +458,7 @@ def get_habitat_dataset(
             )
             # Convert to clip datasets
             clip_train_dataset = ClipLabelledLocation(
-                view_train_dataset, location_train_dataset
+                view_train_dataset, location_train_dataset, id_to_name=id_to_name
             )
             torch.save(clip_train_dataset, cache_fp)
 
@@ -464,7 +477,7 @@ def get_habitat_dataset(
                 # Return segmentation for all images in test.
             )
             clip_test_dataset = ClipLabelledLocation(
-                view_test_dataset, location_test_dataset
+                view_test_dataset, location_test_dataset, id_to_name=id_to_name
             )
             torch.save(clip_test_dataset, cache_fp)
 
@@ -516,7 +529,7 @@ def main(cfg):
     # Run basic sanity test on the dataloader.
     (
         label_set,
-        parent_dataset,
+        parent_train_dataset,
         clip_train_dataset,
         clip_test_dataset,
     ) = get_habitat_dataset(
@@ -539,7 +552,7 @@ def main(cfg):
         [
             x[0]
             for x in (
-                clip_train_dataset.coordinate_range,
+                parent_train_dataset.coordinate_range,
                 clip_test_dataset.coordinate_range,
             )
         ]
@@ -548,7 +561,7 @@ def main(cfg):
         [
             x[1]
             for x in (
-                clip_train_dataset.coordinate_range,
+                parent_train_dataset.coordinate_range,
                 clip_test_dataset.coordinate_range,
             )
         ]
@@ -565,8 +578,8 @@ def main(cfg):
         labelling_model = ImplicitCLIPModel()
     elif cfg.model_type == "hash":
         labelling_model = GridCLIPModel(
-            image_rep_size=parent_dataset.image_representation_size,
-            text_rep_size=parent_dataset.text_representation_size,
+            image_rep_size=parent_train_dataset.image_representation_size,
+            text_rep_size=parent_train_dataset.text_representation_size,
             max_coords=max_coords,
             min_coords=min_coords,
         )
@@ -593,6 +606,52 @@ def main(cfg):
     logging.info(f"Test loader sizes: clip {len(clip_test_loader)}")
 
     labelling_model = labelling_model.to(cfg.device)
+
+    save_directory = cfg.save_directory.format(cfg.scene.base)
+    loaded = False
+    if os.path.exists("outputs/implicit_models/{}/".format(save_directory)):
+        # First find out which epoch is the latest one.
+        all_files = glob.glob(
+            "outputs/implicit_models/{}/implicit_scene_label_model_*.pt".format(
+                save_directory
+            )
+        )
+        if len(all_files) > 0:
+            # Find out which is the latest checkpoint.
+            epoch = 0
+            model_path = (
+                "outputs/implicit_models/{}/implicit_scene_label_model_{}.pt".format(
+                    save_directory, epoch
+                )
+            )
+            while os.path.exists(model_path):
+                epoch += 5
+                model_path = "outputs/implicit_models/{}/implicit_scene_label_model_{}.pt".format(
+                    save_directory, epoch
+                )
+            epoch -= 5
+            model_path = (
+                "outputs/implicit_models/{}/implicit_scene_label_model_{}.pt".format(
+                    save_directory, epoch
+                )
+            )
+            logging.info("Resuming job from: {model_path}")
+            # This has already started training, let's load the model
+            labelling_model = torch.load(
+                model_path,
+                map_location=cfg.device,
+            )
+            resume = True
+            loaded = True
+            epoch += 1
+    if not loaded:
+        os.makedirs(
+            "outputs/implicit_models/{}/".format(save_directory),
+            exist_ok=True,
+        )
+        epoch = 0
+        resume = False
+
     optim = torch.optim.Adam(
         labelling_model.parameters(),
         lr=1e-4,
@@ -606,15 +665,10 @@ def main(cfg):
             f"model/{cfg.model_type}",
         ],
         config=OmegaConf.to_container(cfg, resolve=True),
+        resume=resume,
     )
 
-    save_directory = cfg.save_directory.format(cfg.scene.base)
-    os.makedirs(
-        "outputs/implicit_models/{}/".format(save_directory),
-        exist_ok=True,
-    )
-
-    for epoch in range(cfg.epochs):
+    while epoch < cfg.epochs:
         train(
             clip_train_loader,
             labelling_model,
@@ -639,6 +693,7 @@ def main(cfg):
                 instance_loss_scale=cfg.instance_loss_scale,
                 save_directory=save_directory,
             )
+        epoch += 1
 
 
 if __name__ == "__main__":

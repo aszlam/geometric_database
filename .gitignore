@@ -15,6 +15,7 @@ multirun
 *.o
 *.egg-info
 build
+dist
 
 .cache
 .ipynb_checkpoints

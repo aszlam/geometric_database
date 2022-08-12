@@ -207,8 +207,7 @@ class DeticDenseLabelledDataset(Dataset):
                     tfm_image = self.transform(resized_image)
                     outputs = self.evaluator.parallel_forward(
                         tfm_image, self._all_lseg_classes
-                    )  # evaluator.forward(image, labels) #parallel_forward
-                    # outputs = model(image,labels)
+                    )
                     image_feature = clip_model.encode_image(resized_image).squeeze(0)
                     image_feature = image_feature.cpu()
                     predicts = [torch.max(output, 1)[1].cpu() for output in outputs]
@@ -234,7 +233,7 @@ class DeticDenseLabelledDataset(Dataset):
                             einops.repeat(image_feature, "d -> b d", b=total_points)
                         )
                         self._label_idx.append(torch.ones(total_points) * label_idx)
-                        self._distance.append(torch.ones(total_points) * 2.0)
+                        self._distance.append(torch.ones(total_points) * 5.0)
                 # Since they all get the same image, here label idx is increased once
                 # at the very end.
                 label_idx += 1
@@ -288,10 +287,14 @@ class DeticDenseLabelledDataset(Dataset):
         return len(self._label_xyz)
 
     def _setup_detic_all_classes(self, habitat_view_data):
+        # Unifying all the class labels.
         predictor = DefaultPredictor(cfg)
-        self._all_classes = metadata.thing_classes + list(
-            habitat_view_data._id_to_name.values()
+        self._all_classes = (
+            ["Other"]
+            + list(habitat_view_data._id_to_name.values())
+            + metadata.thing_classes
         )
+        print(self._all_classes)
         new_metadata = MetadataCatalog.get("__unused")
         new_metadata.thing_classes = self._all_classes
         classifier = get_clip_embeddings(new_metadata.thing_classes)
@@ -315,7 +318,7 @@ class DeticDenseLabelledDataset(Dataset):
         ]
         self._num_true_lseg_classes = len(self._lseg_classes)
         self._all_lseg_classes = self._lseg_classes + [
-            "others"
+            "Other"
         ]  # list(classes_taken_out)
         # We will try to classify all the classes, but will use LSeg labels for classes that
         # are not identified by Detic.

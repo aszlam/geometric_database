@@ -19,6 +19,7 @@ class ClipLabelledLocation(Dataset):
         self,
         view_dataset: HabitatViewDataset,
         location_dataset: HabitatLocationDataset,
+        id_to_name: Dict[int, str],
         clip_model_name: str = "ViT-B/32",
         sentence_encoding_model_name="all-mpnet-base-v2",
         device: str = "cuda",
@@ -40,7 +41,7 @@ class ClipLabelledLocation(Dataset):
             model,
             sentence_model,
             view_dataset,
-            self.loc_dataset.instance_id_to_name,
+            id_to_name,
             batch_size,
             device,
         )
@@ -56,19 +57,20 @@ class ClipLabelledLocation(Dataset):
     ):
         # Step 1: set up all the clip vectors for the tags.
         # Tokenize all the names.
-        text_strings = []
+        text_strings = [self.EMPTY]
         for name in id_to_name.values():
-            text_strings.append(self.PROMPT + name.replace("-", " "))
-        text_strings.append(self.EMPTY)
+            text_strings.append(self.PROMPT + name.replace("-", " ").replace("_", " "))
+        print(text_strings)
+
         with torch.no_grad():
             all_embedded_text = sentence_model.encode(text_strings)
             all_embedded_text = torch.from_numpy(all_embedded_text).float()
         self._text_embed_size = all_embedded_text.size(-1)
         # Now map from text data to embeddings.
-        for index, id in enumerate(id_to_name.keys()):
-            self._id_to_clip_vector[id] = all_embedded_text[index]
+        for id in id_to_name.keys():
+            self._id_to_clip_vector[id] = all_embedded_text[id]
         # The empty index
-        self._id_to_clip_vector[-1] = all_embedded_text[-1]
+        self._id_to_clip_vector[0] = all_embedded_text[0]
 
         # Step 2: set up clip vector for every view images.
         # set up dataloader
@@ -96,7 +98,7 @@ class ClipLabelledLocation(Dataset):
         location_data = self.loc_dataset[index]
         result = {
             "clip_vector": self._id_to_clip_vector.get(
-                location_data["label"].item(), self._id_to_clip_vector[-1]
+                location_data["label"].item(), self._id_to_clip_vector[0]
             ),
             "clip_image_vector": self._view_to_clip_vector.get(
                 location_data["img_idx"].item(), None  # self._id_to_clip_vector[-1]
@@ -147,6 +149,7 @@ class ClassificationExtractor:
             text = clip.tokenize(text_strings).to(device)
             clip_encoded_text = clip_model.encode_text(text).float().to(device)
 
+        self.total_label_classes = len(text_strings)
         self._sentence_embed_size = all_embedded_text.size(-1)
         self._clip_embed_size = clip_encoded_text.size(-1)
 
@@ -164,8 +167,12 @@ class ClassificationExtractor:
         model_text_features = F.normalize(model_text_features, p=2, dim=-1)
         model_image_features = F.normalize(model_image_features, p=2, dim=-1)
 
-        text_logits = model_text_features @ self._sentence_features.T
-        image_logits = model_image_features @ self._clip_text_features.T
+        with torch.no_grad():
+            text_logits = model_text_features @ self._sentence_features.T
+            image_logits = model_image_features @ self._clip_text_features.T
+
+        assert text_logits.size(-1) == self.total_label_classes
+        assert image_logits.size(-1) == self.total_label_classes
 
         # Figure out sum of probabilities.
         return (

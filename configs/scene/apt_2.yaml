@@ -1,0 +1,6 @@
+base: apartment_2
+filepath: 
+  - "/private/home/notmahi/data/replica_dataset/apartment_2/habitat/mesh_semantic.ply"
+grid_size: 10
+image_size: 224
+subsample_prob: 0.2

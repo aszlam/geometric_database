@@ -1,11 +1,12 @@
-from typing import Iterable, List, Tuple, Union
+from typing import Any, Iterable, List, Optional, Tuple, Union
 
 import torch
 import json
 import numpy as np
 import tqdm
 import quaternion
-from habitat_sim.utils.data import ImageExtractor
+
+# from habitat_sim.utils.data import ImageExtractor
 from habitat_sim.agent.agent import AgentState
 from torch.utils.data import Dataset
 from torchvision import transforms
@@ -14,6 +15,7 @@ from utils.habitat_utils import (
     custom_pose_extractor_factory,
     depth_and_camera_to_global_xyz,
     depth_and_camera_to_local_xyz,
+    ImageExtractor,
 )
 import einops
 
@@ -54,14 +56,21 @@ class HabitatViewDataset(Dataset):
             if isinstance(habitat_scenes, str)
             else list(habitat_scenes)
         )
+        if "hm3d" in habitat_scenes[0]:
+            scene_cfg = "/private/home/notmahi/data/hm3d_semantic/data/versioned_data/hm3d-1.0/hm3d/hm3d_annotated_basis.scene_dataset_config.json"
+        else:
+            scene_cfg = None
         assert len(image_size) == 2
         self.image_size = tuple(image_size)
+
         self.image_extractor = ImageExtractor(
             scene_filepath=self.habitat_scenes,
             pose_extractor_name=CUSTOM_POSE_EXTRACTOR,
+            scene_dataset_config_file=scene_cfg,
             img_size=image_size,
             output=view_components,
         )
+
         self.poses = self.image_extractor.poses
         self.id_to_name = self.image_extractor.instance_id_to_name
 
@@ -82,6 +91,7 @@ class HabitatViewDataset(Dataset):
                 instance_id: self._name_to_id.get(name, 0)
                 for (instance_id, name) in self.instance_id_to_name.items()
             }
+            print(self._id_to_name, self._instance_id_to_canonical_id)
             self.map_to_class_id = np.vectorize(
                 lambda x: self._instance_id_to_canonical_id.get(x, 0)
             )
@@ -99,6 +109,8 @@ class HabitatViewDataset(Dataset):
         # self.extractor.poses gives you the pose information
         # (both x y z and also quarternions)
         raw_semantic_output = sample["semantic"]
+        if idx == 0:
+            print(raw_semantic_output.max(), raw_semantic_output.min())
         truth_mask = (
             self.map_to_class_id(raw_semantic_output)
             if self._use_canonical_id
