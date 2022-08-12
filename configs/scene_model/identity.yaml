@@ -1,8 +1,0 @@
-scene_transformer:
-  _target_: models.scene_transformer.SceneTransformer
-  representation_dim: ${representation_dim}
-  device: ${device}
-  mask_prob: 0.5
-  pos_mask_prob: 0.5
-  scene_model:
-    _target_: torch.nn.Identity

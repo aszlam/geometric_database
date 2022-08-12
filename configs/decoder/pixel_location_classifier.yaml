@@ -1,7 +1,0 @@
-_target_: models.task_decoders.pixel_location_conv_classifier.PixelLocationConvSoftmaxDecoder
-representation_length: ${representation_dim}
-depth: 3
-hidden_dim: 256
-batchnorm: True
-device: ${device}
-lam: 1.0
