@@ -3,8 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.mlp import MLP
-from models.scene_models.positional_encoding import FourierFeatures
-
+from utils.positional_encoding import FourierFeatures
 
 
 class ImplicitSurfaceModel(nn.Module):
