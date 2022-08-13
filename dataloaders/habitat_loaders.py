@@ -41,8 +41,8 @@ class HabitatViewDataset(Dataset):
         self,
         habitat_scenes: Union[str, Iterable[str]],
         view_components: List[str] = ["rgba", "depth", "semantic"],
-        pose_extractor_grid_size: int = 50,
-        height_levels: int = 5,
+        pose_extractor_grid_size: int = 10,
+        height_levels: int = 0,
         image_size: Iterable[int] = (512, 512),
         transforms=transforms.Compose([transforms.ToTensor()]),
         canonical_object_ids: bool = True,
@@ -57,7 +57,7 @@ class HabitatViewDataset(Dataset):
             else list(habitat_scenes)
         )
         if "hm3d" in habitat_scenes[0]:
-            scene_cfg = "/private/home/notmahi/data/hm3d_semantic/data/versioned_data/hm3d-1.0/hm3d/hm3d_annotated_basis.scene_dataset_config.json"
+            scene_cfg = "/checkpoint/notmahi/data/hm3d_semantic/data/versioned_data/hm3d-1.0/hm3d/hm3d_annotated_basis.scene_dataset_config.json"
         else:
             scene_cfg = None
         assert len(image_size) == 2
@@ -84,14 +84,22 @@ class HabitatViewDataset(Dataset):
             # Load the canonical name to ID mapper.
             self._name_to_id = {}
             self._id_to_name = {}
-            for obj in json.load(open(canonical_names_path)):
-                self._name_to_id[obj["name"]] = obj["id"]
-                self._id_to_name[obj["id"]] = obj["name"]
+            if not "hm3d" in self.habitat_scenes[0]:
+                # Habitat scenes
+                for obj in json.load(open(canonical_names_path)):
+                    self._name_to_id[obj["name"]] = obj["id"]
+                    self._id_to_name[obj["id"]] = obj["name"]
+            else:
+                semantic_class_names = sorted(
+                    self.image_extractor.get_semantic_class_names()
+                )
+                for idx, name in enumerate(semantic_class_names):
+                    self._name_to_id[name] = idx
+                    self._id_to_name[idx] = name
             self._instance_id_to_canonical_id = {
                 instance_id: self._name_to_id.get(name, 0)
                 for (instance_id, name) in self.instance_id_to_name.items()
             }
-            print(self._id_to_name, self._instance_id_to_canonical_id)
             self.map_to_class_id = np.vectorize(
                 lambda x: self._instance_id_to_canonical_id.get(x, 0)
             )
@@ -270,13 +278,8 @@ class HabitatLocationDataset(Dataset):
         return Itc
 
     def _extract_dataset(self, habitat_view_dataset):
-
         # Itereate over the view dataset to extract all possible object tags.
         for idx in tqdm.trange(len(habitat_view_dataset)):
-            # Only keep segmented images here
-            if not self._return_nonsegmented_images:
-                if idx not in self._inst_segmented_images:
-                    continue
             # index needs to either be in instance segmented or sem segmented images.
             if (
                 idx not in self._inst_segmented_images
@@ -315,16 +318,9 @@ class HabitatLocationDataset(Dataset):
                 einops.rearrange(all_rgb, "w h d -> (w h) d")[subsampled]
             )
             self.indices.append(np.ones_like(self.semantic_label[-1]) * idx)
-            if not self._return_nonsegmented_images:
-                self.distance_data.append(
-                    einops.rearrange(torch.ones_like(depth_map) * 100, "w h -> (w h)")[
-                        subsampled
-                    ]
-                )
-            else:
-                self.distance_data.append(
-                    einops.rearrange(depth_map, "w h -> (w h)")[subsampled]
-                )
+            self.distance_data.append(
+                einops.rearrange(torch.ones_like(depth_map), "w h -> (w h)")[subsampled]
+            )
 
         # Now combine everything in one array.
         self.coordinates = torch.from_numpy(np.concatenate(self.coordinates, axis=0))

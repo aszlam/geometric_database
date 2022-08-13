@@ -65,7 +65,9 @@ class SemanticSegmentationDataset(Dataset):
 
 if __name__ == "__main__":
     # Replace with the path to your scene file
-    SCENE_FILEPATH = "/private/home/notmahi/data/replica_dataset/apartment_0/habitat/mesh_semantic.ply"
+    SCENE_FILEPATH = (
+        "/checkpoint/notmahi/data/replica_dataset/apartment_0/habitat/mesh_semantic.ply"
+    )
     BATCH_SIZE = 6
     # Run basic sanity test on the dataloader.
     extractor = ImageExtractor(

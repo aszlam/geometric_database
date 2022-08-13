@@ -13,7 +13,7 @@ from sentence_transformers import SentenceTransformer
 class ClipLabelledLocation(Dataset):
     PROMPT = "A "
     EMPTY = "Other"
-    FAR_DISTANCE = 10.0
+    FAR_DISTANCE = 2.0
 
     def __init__(
         self,
@@ -30,9 +30,7 @@ class ClipLabelledLocation(Dataset):
         sentence_model = SentenceTransformer(
             sentence_encoding_model_name, device=device
         )
-        self._semantic_weight = (
-            1.0 if self.loc_dataset._return_nonsegmented_images else 0.0
-        )
+        self._semantic_weight = 1.0
         self._semantic_weight = torch.tensor(self._semantic_weight)
         self._id_to_clip_vector = {}
         self._view_to_clip_vector = {}
@@ -60,7 +58,6 @@ class ClipLabelledLocation(Dataset):
         text_strings = [self.EMPTY]
         for name in id_to_name.values():
             text_strings.append(self.PROMPT + name.replace("-", " ").replace("_", " "))
-        print(text_strings)
 
         with torch.no_grad():
             all_embedded_text = sentence_model.encode(text_strings)
@@ -148,6 +145,9 @@ class ClassificationExtractor:
         with torch.no_grad():
             text = clip.tokenize(text_strings).to(device)
             clip_encoded_text = clip_model.encode_text(text).float().to(device)
+
+        del clip_model
+        del sentence_model
 
         self.total_label_classes = len(text_strings)
         self._sentence_embed_size = all_embedded_text.size(-1)

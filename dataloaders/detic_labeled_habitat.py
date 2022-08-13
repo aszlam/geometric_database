@@ -145,6 +145,7 @@ class DeticDenseLabelledDataset(Dataset):
         )
         return [x[1] for x in sorted_num_object_and_img[:num_images_to_label]]
 
+    @torch.no_grad()
     def _setup_detic_dense_labels(
         self, dataset, images_to_label, clip_model, sentence_model
     ):
@@ -222,18 +223,20 @@ class DeticDenseLabelledDataset(Dataset):
                     pred_mask = predict.squeeze(0) == label
                     total_points = len(reshaped_coordinates[pred_mask])
                     if total_points:
+                        class_text_id = self._lseg_class_labels[
+                            self._all_lseg_classes[label]
+                        ]
                         self._label_xyz.append(reshaped_coordinates[pred_mask])
                         self._label_rgb.append(reshaped_rgb[pred_mask])
-                        self._text_ids.append(
-                            torch.ones(total_points) * (label + len(self._all_classes))
-                        )
+                        # Ideally, this should give all classes their true class label.
+                        self._text_ids.append(torch.ones(total_points) * class_text_id)
                         # Uniform label confidence of 0.25
                         self._label_weight.append(torch.ones(total_points) * 0.25)
                         self._image_features.append(
                             einops.repeat(image_feature, "d -> b d", b=total_points)
                         )
                         self._label_idx.append(torch.ones(total_points) * label_idx)
-                        self._distance.append(torch.ones(total_points) * 5.0)
+                        self._distance.append(torch.ones(total_points) * 2.0)
                 # Since they all get the same image, here label idx is increased once
                 # at the very end.
                 label_idx += 1
@@ -294,7 +297,9 @@ class DeticDenseLabelledDataset(Dataset):
             + list(habitat_view_data._id_to_name.values())
             + metadata.thing_classes
         )
-        print(self._all_classes)
+        self._all_classes = [
+            x.replace("-", " ").replace("_", " ") for x in self._all_classes
+        ]
         new_metadata = MetadataCatalog.get("__unused")
         new_metadata.thing_classes = self._all_classes
         classifier = get_clip_embeddings(new_metadata.thing_classes)
@@ -313,13 +318,22 @@ class DeticDenseLabelledDataset(Dataset):
             "floor",
             "ceiling",
             "door",
-            "windows",
-            "walls",
+            "window",
+            "wall",
         ]
         self._num_true_lseg_classes = len(self._lseg_classes)
-        self._all_lseg_classes = self._lseg_classes + [
-            "Other"
-        ]  # list(classes_taken_out)
+        self._all_lseg_classes = self._lseg_classes + ["Other"]
+
+        def find_in_class(idx, classname):
+            try:
+                return self._all_classes.index(classname)
+            except ValueError:
+                return len(self._all_classes) + idx
+
+        # Figure out the class labels.
+        self._lseg_class_labels = {
+            classname: find_in_class(idx, classname) for idx, classname in enumerate(self._all_lseg_classes)
+        }
         # We will try to classify all the classes, but will use LSeg labels for classes that
         # are not identified by Detic.
 
