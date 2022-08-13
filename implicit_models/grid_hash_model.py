@@ -113,10 +113,14 @@ class GridCLIPModel(nn.Module):
         self._post_grid = self._post_grid.to(device)
         self._image_head = self._image_head.to(device)
         self.temperature.data = self.temperature.data.to(device)
+        self._max_bounds = self._max_bounds.to(device)
+        self._min_bounds = self._min_bounds.to(device)
 
     def forward(self, x: torch.Tensor, bounds: Optional[float] = None):
         if bounds is None:
-            max_bounds, min_bounds = self._max_bounds, self._min_bounds
+            max_bounds, min_bounds = self._max_bounds.to(x.device), self._min_bounds.to(
+                x.device
+            )
         else:
             max_bounds, min_bounds = (
                 torch.ones(3, device=x.device) * bounds,

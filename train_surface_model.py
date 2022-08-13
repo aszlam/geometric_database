@@ -26,6 +26,7 @@ from dataloaders.detic_labeled_habitat import DeticDenseLabelledDataset
 from dataloaders.habitat_loaders import HabitatLocationDataset, HabitatViewDataset
 from implicit_models.grid_hash_model import GridCLIPModel
 from implicit_models.implicit_mlp import ImplicitCLIPModel
+from implicit_models.implicit_dataparallel import ImplicitDataparallel
 
 SCENE = "apartment_0"
 # Replace with the path to your scene file
@@ -261,6 +262,7 @@ def test(
     label_to_image_loss_ratio=LABEL_TO_IMAGE_LOSS_SCALE,
     instance_loss_scale=INSTANCE_LOSS_SCALE,
     save_directory=SAVE_DIRECTORY,
+    saving_dataparallel=False,
 ):
     labelling_model.eval()
     with torch.no_grad():
@@ -396,12 +398,16 @@ def test(
             "test_avg/loss_sum": total_loss / total_samples,
         }
     )
+    if saving_dataparallel:
+        to_save = labelling_model.module
+    else:
+        to_save = labelling_model
     torch.save(
-        labelling_model,
+        to_save,
         f"outputs/implicit_models/{save_directory}/implicit_scene_label_model_{epoch}.pt",
     )
     torch.save(
-        labelling_model,
+        to_save,
         f"outputs/implicit_models/{save_directory}/implicit_scene_label_model_latest.pt",
     )
 
@@ -487,6 +493,11 @@ def get_habitat_dataset(
         )
     else:
         clip_train_dataset_concat = clip_train_dataset
+
+    # Close dataset sim
+    dataset.image_extractor.sim.close()
+    del dataset.image_extractor.sim
+
     return (
         list(dataset._id_to_name.values()),
         clip_train_dataset,
@@ -584,6 +595,11 @@ def main(cfg):
             min_coords=min_coords,
         )
     label_voxel_count = int(cfg.label_voxel_count)
+
+    if torch.cuda.device_count() > 1 and cfg.dataparallel:
+        batch_multiplier = torch.cuda.device_count()
+    else:
+        batch_multiplier = 1
     label_sampler = RandomSampler(
         data_source=clip_train_dataset,
         num_samples=label_voxel_count,
@@ -591,7 +607,7 @@ def main(cfg):
     )
     clip_train_loader = DataLoader(
         clip_train_dataset,
-        batch_size=cfg.point_batch_size,
+        batch_size=batch_multiplier * cfg.point_batch_size,
         sampler=label_sampler,
         pin_memory=True,
     )
@@ -652,6 +668,11 @@ def main(cfg):
         epoch = 0
         resume = False
 
+    dataparallel = False
+    if torch.cuda.device_count() > 1 and cfg.dataparallel:
+        labelling_model = ImplicitDataparallel(labelling_model)
+        dataparallel = True
+
     optim = torch.optim.Adam(
         labelling_model.parameters(),
         lr=1e-4,
@@ -692,6 +713,7 @@ def main(cfg):
                 label_to_image_loss_ratio=cfg.label_to_image_loss_ratio,
                 instance_loss_scale=cfg.instance_loss_scale,
                 save_directory=save_directory,
+                saving_dataparallel=dataparallel,
             )
         epoch += 1
 
