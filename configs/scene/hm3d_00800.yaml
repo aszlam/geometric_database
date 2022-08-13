@@ -1,0 +1,6 @@
+base: hm3d_00800
+filepath: 
+  - "/checkpoint/notmahi/data/hm3d_semantic/data/versioned_data/hm3d-1.0/hm3d/minival/00800-TEEsavR23oF/TEEsavR23oF.basis.glb"
+grid_size: 10
+image_size: 224
+subsample_prob: 0.2

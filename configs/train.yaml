@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - scene: apt_2
+  - scene: hm3d_00800
   - override hydra/launcher: submitit_slurm
 
 device: cuda
@@ -15,15 +15,16 @@ image_to_label_loss_ratio: 1.0
 label_to_image_loss_ratio: 1.0
 instance_loss_scale: 5.0
 label_voxel_count: 3e6
+dataparallel: false
 
 # Number of ground truth labeled images
 num_inst_segmented_images: 5
-num_sem_segmented_images: 6
-num_web_segmented_images: 5
+num_sem_segmented_images: 48
+num_web_segmented_images: 135
 gt_segmentation_baseline: false
 
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
-cache_only_run: false
+cache_only_run: true
 
 save_directory: "habitat_{}_detic_lseg_labels_${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
@@ -40,10 +41,12 @@ hydra:
     dir: multirun/${scene.base}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}
   sweeper:
     params:
-      num_sem_segmented_images: 0,6,12,24,48,96
-      num_web_segmented_images: 0,5,15,45,135,300
+      num_sem_segmented_images: 0
+      # num_sem_segmented_images: 0,6,12,24,48,96
+      num_web_segmented_images: 0,5,15,45,135
   launcher:
-    timeout_min: 1440
+    # timeout_min: 1440
+    timeout_min: 120
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1
@@ -52,8 +55,8 @@ hydra:
     name: ${hydra.job.name}
     _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
     signal_delay_s: 120
-    max_num_timeout: 0
+    max_num_timeout: 3
     additional_parameters: {}
     array_parallelism: 256
     setup: null
-    partition: scavenge
+    partition: learnfair
