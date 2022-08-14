@@ -332,7 +332,8 @@ class DeticDenseLabelledDataset(Dataset):
 
         # Figure out the class labels.
         self._lseg_class_labels = {
-            classname: find_in_class(idx, classname) for idx, classname in enumerate(self._all_lseg_classes)
+            classname: find_in_class(idx, classname)
+            for idx, classname in enumerate(self._all_lseg_classes)
         }
         # We will try to classify all the classes, but will use LSeg labels for classes that
         # are not identified by Detic.

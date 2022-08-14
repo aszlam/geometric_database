@@ -618,8 +618,11 @@ def main(cfg):
         pin_memory=True,
     )
 
-    logging.info(f"Train loader sizes: clip {len(clip_train_loader)}")
-    logging.info(f"Test loader sizes: clip {len(clip_test_loader)}")
+    logging.info(f"Train human labelled point sizes: {len(parent_train_dataset)}")
+    logging.info(f"Total train dataset sizes: {len(clip_train_dataset)}")
+    logging.info(f"Test dataset sizes: {len(clip_test_dataset)}")
+    logging.info(f"Epochs for one pass over dataset: {len(clip_train_dataset) // label_voxel_count}")
+
 
     labelling_model = labelling_model.to(cfg.device)
 
@@ -680,13 +683,25 @@ def main(cfg):
         weight_decay=0.01,
     )
 
+    if cfg.deterministic_id:
+        run_id = f"grid_{cfg.scene.base}_{cfg.scene.image_size}i{cfg.num_inst_segmented_images}s{cfg.num_sem_segmented_images}w{cfg.num_web_segmented_images}"
+    else:
+        run_id = wandb.util.generate_id()
+
     wandb.init(
         project="implicit_semantic_model_grid",
+        id=run_id,
         tags=[
             f"model/{cfg.model_type}",
+            f"scene/{cfg.scene.base}",
         ],
         config=OmegaConf.to_container(cfg, resolve=True),
         resume=resume,
+    )
+    # Set the extra parameters.
+    wandb.config.human_labelled_points = len(parent_train_dataset)
+    wandb.config.web_labelled_points = len(clip_train_dataset) - len(
+        parent_train_dataset
     )
 
     while epoch < cfg.epochs:

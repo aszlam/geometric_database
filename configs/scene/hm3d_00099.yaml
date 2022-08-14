@@ -1,0 +1,6 @@
+base: hm3d_00099
+filepath: 
+  - "/checkpoint/notmahi/data/hm3d_semantic/data/versioned_data/hm3d-1.0/hm3d/train/00099-226REUyJh2K/226REUyJh2K.basis.glb"
+grid_size: 10
+image_size: 224
+subsample_prob: 0.2

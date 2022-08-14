@@ -237,7 +237,7 @@ class HabitatLocationDataset(Dataset):
         else:
             self._inst_segmented_images = range(dataset_len)
 
-        if selective_semantic_segmentation and (dataset_len < num_sem_segmented_images):
+        if selective_semantic_segmentation:
             self._sem_segmented_images = self.get_best_sem_segmented_images(
                 habitat_view_ds, num_segmented_images=num_sem_segmented_images
             )
