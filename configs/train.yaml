@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - scene: hm3d_00099
+  - scene: apt_2
   - override hydra/launcher: submitit_slurm
 
 device: cuda
@@ -19,8 +19,8 @@ dataparallel: false
 
 # Number of ground truth labeled images
 num_inst_segmented_images: 5
-num_sem_segmented_images: 48
-num_web_segmented_images: 135
+num_sem_segmented_images: 0
+num_web_segmented_images: 0
 gt_segmentation_baseline: false
 deterministic_id: true
 
@@ -42,13 +42,13 @@ hydra:
     dir: multirun/${scene.base}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}
   sweeper:
     params:
+      scene: hm3d_00250,hm3d_00732,hm3d_00263
       # num_sem_segmented_images: 0
       num_sem_segmented_images: 0,6,12,24,48,96
       num_web_segmented_images: 0,5,15,45,135
-      scene: apt_0, apt_2, hm3d_00099
   launcher:
     timeout_min: 1440
-    # timeout_min: 120
+    # timeout_min: 70
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1
