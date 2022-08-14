@@ -25,7 +25,7 @@ gt_segmentation_baseline: false
 deterministic_id: true
 
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
-cache_only_run: true
+cache_only_run: false
 
 save_directory: "habitat_{}_detic_lseg_labels_${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
@@ -47,7 +47,7 @@ hydra:
       num_web_segmented_images: 0,5,15,45,135
       scene: apt_0, apt_2, hm3d_00099
   launcher:
-    timeout_min: 2880
+    timeout_min: 1440
     # timeout_min: 120
     cpus_per_task: 10
     gpus_per_node: 1
