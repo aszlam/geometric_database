@@ -46,7 +46,7 @@ hydra:
     dir: multirun/${scene.base}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}
   sweeper:
     params:
-      scene: hm3d_00250,hm3d_00732,hm3d_00263
+      scene: hm3d_00250,hm3d_00732,hm3d_00263,hm3d_00099,apt_0,apt_2
       # num_sem_segmented_images: 0
       num_sem_segmented_images: 0,6,12,24,48,96
       num_web_segmented_images: 0,5,15,45,135

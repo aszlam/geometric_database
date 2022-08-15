@@ -82,6 +82,7 @@ def train(
     image_to_label_loss_ratio=IMAGE_TO_LABEL_CLIP_LOSS_SCALE,
     label_to_image_loss_ratio=LABEL_TO_IMAGE_LOSS_SCALE,
     instance_loss_scale=INSTANCE_LOSS_SCALE,
+    disable_tqdm=False,
 ):
     total_loss = 0
     label_loss = 0
@@ -95,7 +96,9 @@ def train(
     total_classification_accuracy = 0
     labelling_model.train()
     total = len(clip_train_loader)
-    for clip_data_dict in tqdm.tqdm(clip_train_loader, total=total):
+    for clip_data_dict in tqdm.tqdm(
+        clip_train_loader, total=total, disable=disable_tqdm
+    ):
         optim.zero_grad()
 
         # Now calculate loss from the labelling side
@@ -672,7 +675,7 @@ def main(cfg):
                 model_path,
                 map_location=cfg.device,
             )
-            resume = True
+            resume = "allow"
             loaded = True
             epoch += 1
     if not loaded:
@@ -717,6 +720,12 @@ def main(cfg):
         parent_train_dataset
     )
 
+    # Disable tqdm if we are running inside slurm
+    job_id = os.environ.get("SLURM_JOB_ID")
+    if job_id is not None:
+        disable_tqdm = True
+    else:
+        disable_tqdm = False
     while epoch < cfg.epochs:
         train(
             clip_train_loader,
@@ -728,6 +737,7 @@ def main(cfg):
             image_to_label_loss_ratio=cfg.image_to_label_loss_ratio,
             label_to_image_loss_ratio=cfg.label_to_image_loss_ratio,
             instance_loss_scale=cfg.instance_loss_scale,
+            disable_tqdm=disable_tqdm,
         )
         if epoch % EVAL_EVERY == 0:
             test(
