@@ -96,11 +96,11 @@ class ClipLabelledLocation(Dataset):
         result = {
             "clip_vector": self._id_to_clip_vector.get(
                 location_data["label"].item(), self._id_to_clip_vector[0]
-            ),
+            ).float(),
             "clip_image_vector": self._view_to_clip_vector.get(
                 location_data["img_idx"].item(), None  # self._id_to_clip_vector[-1]
-            ),
-            "semantic_weight": self._semantic_weight,
+            ).float(),
+            "semantic_weight": self._semantic_weight.float(),
             "distance": self.FAR_DISTANCE,  # Image labels are slightly misleading, so we set it high
         }
         result.update(location_data)

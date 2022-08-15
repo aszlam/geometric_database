@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - scene: apt_2
+  - scene: hm3d_00250
   - override hydra/launcher: submitit_slurm
 
 device: cuda
@@ -20,8 +20,8 @@ num_workers: 10
 
 # Number of ground truth labeled images
 num_inst_segmented_images: 5
-num_sem_segmented_images: 0
-num_web_segmented_images: 0
+num_sem_segmented_images: 12
+num_web_segmented_images: 5
 gt_segmentation_baseline: false
 deterministic_id: true
 
@@ -49,9 +49,9 @@ hydra:
       scene: hm3d_00250,hm3d_00732,hm3d_00263,hm3d_00099,apt_0,apt_2
       # num_sem_segmented_images: 0
       num_sem_segmented_images: 0,6,12,24,48,96
-      num_web_segmented_images: 0,5,15,45,135
+      num_web_segmented_images: 5,15,45,135
   launcher:
-    timeout_min: 1440
+    timeout_min: 360
     # timeout_min: 70
     cpus_per_task: 10
     gpus_per_node: 1

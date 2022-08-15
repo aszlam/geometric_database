@@ -259,13 +259,13 @@ class DeticDenseLabelledDataset(Dataset):
             self._text_id_to_feature[i] = feature
 
         # Now, we map from label to text using this model.
-        self._label_xyz = torch.cat(self._label_xyz)
-        self._label_rgb = torch.cat(self._label_rgb)
-        self._label_weight = torch.cat(self._label_weight)
-        self._image_features = torch.cat(self._image_features)
-        self._text_ids = torch.cat(self._text_ids)
-        self._label_idx = torch.cat(self._label_idx)
-        self._distance = torch.cat(self._distance)
+        self._label_xyz = torch.cat(self._label_xyz).float()
+        self._label_rgb = torch.cat(self._label_rgb).float()
+        self._label_weight = torch.cat(self._label_weight).float()
+        self._image_features = torch.cat(self._image_features).float()
+        self._text_ids = torch.cat(self._text_ids).long()
+        self._label_idx = torch.cat(self._label_idx).long()
+        self._distance = torch.cat(self._distance).float()
         self._instance = (
             torch.ones_like(self._text_ids) * -1
         ).long()  # We don't have instance ID from this dataset.
@@ -275,15 +275,15 @@ class DeticDenseLabelledDataset(Dataset):
     def __getitem__(self, idx):
         # Create a dictionary with all relevant results.
         return {
-            "xyz": self._label_xyz[idx],
-            "rgb": self._label_rgb[idx],
-            "label": self._text_ids[idx],
-            "instance": self._instance[idx],
-            "img_idx": self._label_idx[idx],
-            "distance": self._distance[idx],
-            "clip_vector": self._text_id_to_feature.get(self._text_ids[idx].item()),
-            "clip_image_vector": self._image_features[idx],
-            "semantic_weight": self._label_weight[idx],
+            "xyz": self._label_xyz[idx].float(),
+            "rgb": self._label_rgb[idx].float(),
+            "label": self._text_ids[idx].long(),
+            "instance": self._instance[idx].long(),
+            "img_idx": self._label_idx[idx].long(),
+            "distance": self._distance[idx].float(),
+            "clip_vector": self._text_id_to_feature.get(self._text_ids[idx].item()).float(),
+            "clip_image_vector": self._image_features[idx].float(),
+            "semantic_weight": self._label_weight[idx].float(),
         }
 
     def __len__(self):

@@ -323,18 +323,18 @@ class HabitatLocationDataset(Dataset):
             )
 
         # Now combine everything in one array.
-        self.coordinates = torch.from_numpy(np.concatenate(self.coordinates, axis=0))
+        self.coordinates = torch.from_numpy(np.concatenate(self.coordinates, axis=0)).float()
         self.semantic_label = torch.from_numpy(
             np.concatenate(self.semantic_label, axis=0)
-        )
+        ).long()
         self.instance_label = torch.from_numpy(
             np.concatenate(self.instance_label, axis=0)
-        )
-        self.rgb_data = torch.from_numpy(np.concatenate(self.rgb_data, axis=0))
+        ).long()
+        self.rgb_data = torch.from_numpy(np.concatenate(self.rgb_data, axis=0)).float()
         self.distance_data = torch.from_numpy(
             np.concatenate(self.distance_data, axis=0)
-        )
-        self.indices = torch.from_numpy(np.concatenate(self.indices, axis=0))
+        ).float()
+        self.indices = torch.from_numpy(np.concatenate(self.indices, axis=0)).long()
 
         # Now, figure out the maximum and minimum coordinates.
         self.max_coords, _ = torch.max(self.coordinates, dim=0)
