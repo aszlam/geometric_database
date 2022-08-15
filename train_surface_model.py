@@ -285,14 +285,15 @@ def test(
                 device
             )
             label_weights = clip_data_dict["semantic_weight"].to(device)
+            image_label_index = clip_data_dict["img_idx"].to(device).reshape(-1, 1)
+            language_label_index = clip_data_dict["label"].to(device).reshape(-1, 1)
+            instances = clip_data_dict["instance"].to(device).reshape(-1)
             (
                 predicted_label_latents,
                 predicted_image_latents,
                 segmentation_logits,
             ) = labelling_model(xyzs)
-            image_label_index = clip_data_dict["img_idx"].to(device).reshape(-1, 1)
-            language_label_index = clip_data_dict["label"].to(device).reshape(-1, 1)
-            instances = clip_data_dict["instance"].to(device).reshape(-1)
+
             batch_size = len(image_label_index)
             image_label_mask = (
                 image_label_index != image_label_index.t()
@@ -618,12 +619,14 @@ def main(cfg):
         batch_size=batch_multiplier * cfg.point_batch_size,
         sampler=label_sampler,
         pin_memory=True,
+        num_workers=cfg.num_workers,
     )
     clip_test_loader = DataLoader(
         clip_test_dataset,
         batch_size=cfg.point_batch_size,
         shuffle=False,
         pin_memory=True,
+        num_workers=cfg.num_workers,
     )
 
     logging.info(f"Train human labelled point sizes: {len(parent_train_dataset)}")

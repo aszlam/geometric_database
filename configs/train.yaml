@@ -16,6 +16,7 @@ label_to_image_loss_ratio: 1.0
 instance_loss_scale: 5.0
 label_voxel_count: 3e6
 dataparallel: false
+num_workers: 10
 
 # Number of ground truth labeled images
 num_inst_segmented_images: 5
