@@ -221,19 +221,20 @@ def train(
         total_classification_loss += classification_loss.detach().cpu().item()
         total_loss += final_loss.detach().cpu().item()
         total_samples += 1
-        wandb.log(
-            {
-                "train/contrastive_loss_labels": contrastive_loss_labels,
-                "train/contrastive_loss_images": contrastive_loss_images,
-                "train/instance_loss": inst_segmentation_loss,
-                "train/instance_accuracy": accuracy,
-                "train/semseg_loss": classification_loss,
-                "train/semseg_accuracy": classification_accuracy,
-                "train/loss_sum": final_loss,
-                "train/image_label_ratio": image_label_ratio,
-                "train/lang_label_ratio": lang_label_ratio,
-            }
-        )
+        # Disable per-step logs for sweeps.
+        # wandb.log(
+        #     {
+        #         "train/contrastive_loss_labels": contrastive_loss_labels,
+        #         "train/contrastive_loss_images": contrastive_loss_images,
+        #         "train/instance_loss": inst_segmentation_loss,
+        #         "train/instance_accuracy": accuracy,
+        #         "train/semseg_loss": classification_loss,
+        #         "train/semseg_accuracy": classification_accuracy,
+        #         "train/loss_sum": final_loss,
+        #         "train/image_label_ratio": image_label_ratio,
+        #         "train/lang_label_ratio": lang_label_ratio,
+        #     }
+        # )
 
     wandb.log(
         {
@@ -375,17 +376,18 @@ def test(
             total_classification_loss += classification_loss.detach().cpu().item()
             total_samples += 1
 
-            wandb.log(
-                {
-                    "test/contrastive_loss_label": contrastive_loss_labels,
-                    "test/contrastive_loss_image": contrastive_loss_images,
-                    "test/instance_loss": inst_segmentation_loss,
-                    "test/instance_accuracy": accuracy,
-                    "test/semseg_loss": classification_loss,
-                    "test/semseg_accuracy": classification_accuracy,
-                    "test/loss_sum": final_loss,
-                }
-            )
+            # # Disable per-step logs for sweeps.
+            # wandb.log(
+            #     {
+            #         "test/contrastive_loss_label": contrastive_loss_labels,
+            #         "test/contrastive_loss_image": contrastive_loss_images,
+            #         "test/instance_loss": inst_segmentation_loss,
+            #         "test/instance_accuracy": accuracy,
+            #         "test/semseg_loss": classification_loss,
+            #         "test/semseg_accuracy": classification_accuracy,
+            #         "test/loss_sum": final_loss,
+            #     }
+            # )
 
     wandb.log(
         {
@@ -396,7 +398,11 @@ def test(
             "test_avg/semseg_loss": total_classification_loss / total_samples,
             "test_avg/semseg_accuracy": total_classification_accuracy / total_samples,
             "test_avg/loss_sum": total_loss / total_samples,
+            "epoch": epoch,
         }
+    )
+    logging.info(
+        f"Epoch {epoch}: Instance acc: {total_acc / total_samples:0.3f}, segmentation acc: {total_classification_accuracy / total_samples:0.3f}"
     )
     if saving_dataparallel:
         to_save = labelling_model.module
@@ -557,6 +563,7 @@ def main(cfg):
     )
     if cfg.cache_only_run:
         # Caching is done, so we can exit now.
+        logging.info("Cache only run, exiting.")
         exit(0)
     # Setup our model with min and max coordinates.
     max_coords, _ = torch.stack(
@@ -591,6 +598,7 @@ def main(cfg):
         labelling_model = GridCLIPModel(
             image_rep_size=parent_train_dataset.image_representation_size,
             text_rep_size=parent_train_dataset.text_representation_size,
+            segmentation_classes=1024,  # Quick patch
             max_coords=max_coords,
             min_coords=min_coords,
         )
@@ -621,8 +629,9 @@ def main(cfg):
     logging.info(f"Train human labelled point sizes: {len(parent_train_dataset)}")
     logging.info(f"Total train dataset sizes: {len(clip_train_dataset)}")
     logging.info(f"Test dataset sizes: {len(clip_test_dataset)}")
-    logging.info(f"Epochs for one pass over dataset: {len(clip_train_dataset) // label_voxel_count}")
-
+    logging.info(
+        f"Epochs for one pass over dataset: {len(clip_train_dataset) // label_voxel_count}"
+    )
 
     labelling_model = labelling_model.to(cfg.device)
 
@@ -654,7 +663,7 @@ def main(cfg):
                     save_directory, epoch
                 )
             )
-            logging.info("Resuming job from: {model_path}")
+            logging.info(f"Resuming job from: {model_path}")
             # This has already started training, let's load the model
             labelling_model = torch.load(
                 model_path,
@@ -664,6 +673,7 @@ def main(cfg):
             loaded = True
             epoch += 1
     if not loaded:
+        logging.info("Could not find old runs, starting fresh...")
         os.makedirs(
             "outputs/implicit_models/{}/".format(save_directory),
             exist_ok=True,
