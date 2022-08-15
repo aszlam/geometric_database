@@ -73,8 +73,8 @@ def seed_everything(seed: int):
 
 
 def train(
-    clip_train_loader,
-    labelling_model,
+    clip_train_loader: DataLoader,
+    labelling_model: GridCLIPModel,
     optim,
     classifier: ClassificationExtractor,
     device=DEVICE,
@@ -106,78 +106,35 @@ def train(
             device
         )
         label_weights = clip_data_dict["semantic_weight"].to(device)
+        image_label_index = clip_data_dict["img_idx"].to(device).reshape(-1, 1)
+        language_label_index = clip_data_dict["label"].to(device).reshape(-1, 1)
+        instances = clip_data_dict["instance"].to(device).reshape(-1)
         (
+            predicted_label_loss_batch,
             predicted_label_latents,
+            predicted_image_loss_batch,
             predicted_image_latents,
-            segmentation_logits,
-        ) = labelling_model(xyzs)
+            inst_segmentation_loss,
+            accuracy,
+        ) = labelling_model(
+            xyzs,
+            clip_labels,
+            clip_image_labels,
+            language_label_index,
+            image_label_index,
+            label_weights,
+            image_weights,
+            instances,
+        )
 
         # Now create the label mask for the contrastive losses.
         # The idea is that we want to push and pull the representations to the right
         # CLIP representations, however, we don't want to include the same label points
         # in representations to push away from.
-        image_label_index = clip_data_dict["img_idx"].to(device).reshape(-1, 1)
-        language_label_index = clip_data_dict["label"].to(device).reshape(-1, 1)
-        instances = clip_data_dict["instance"].to(device).reshape(-1)
-        batch_size = len(image_label_index)
-        image_label_mask = (
-            image_label_index != image_label_index.t()
-        ).float() + torch.eye(batch_size, device=device)
-        language_label_mask = (
-            language_label_index != language_label_index.t()
-        ).float() + torch.eye(batch_size, device=device)
-
-        # For logging purposes, keep track of negative samples per point.
-        image_label_ratio = (
-            (image_label_mask.sum() / torch.numel(image_label_mask))
-            .detach()
-            .cpu()
-            .item()
-        )
-        lang_label_ratio = (
-            (language_label_mask.sum() / torch.numel(language_label_mask))
-            .detach()
-            .cpu()
-            .item()
-        )
-        image_label_mask.requires_grad = False
-        language_label_mask.requires_grad = False
-        # Use the predicted labels, the ground truth labels, and the masks to
-        # compute the contrastive loss.
-        contrastive_loss_labels = labelling_model.compute_loss(
-            predicted_label_latents,
-            clip_labels,
-            label_mask=language_label_mask,
-            weights=label_weights,
-        )
-        contrastive_loss_images = labelling_model.compute_loss(
-            predicted_image_latents,
-            clip_image_labels,
-            label_mask=image_label_mask,
-            weights=image_weights,
-        )
-        del (
-            image_label_mask,
-            image_label_index,
-            language_label_mask,
-        )
-        instance_mask = instances != -1
-        if not torch.all(instances == -1):
-            inst_segmentation_loss = F.cross_entropy(
-                segmentation_logits[instance_mask], instances[instance_mask]
-            )
-            accuracy = (
-                (
-                    segmentation_logits[instance_mask].argmax(dim=-1)
-                    == instances[instance_mask]
-                )
-                .float()
-                .mean()
-            )
-            accuracy = accuracy.detach().cpu().item()
-        else:
-            inst_segmentation_loss = torch.zeros_like(contrastive_loss_images)
-            accuracy = 1.0
+        contrastive_loss_images = predicted_image_loss_batch.mean()
+        contrastive_loss_labels = predicted_label_loss_batch.mean()
+        inst_segmentation_loss = inst_segmentation_loss.mean()
+        accuracy = accuracy.mean()
 
         # Now figure out semantic segmentation.
         with torch.no_grad():
@@ -212,29 +169,14 @@ def train(
             + label_to_image_loss_ratio * contrastive_loss_labels
             + instance_loss_scale * inst_segmentation_loss
         )
-        final_loss = contrastive_loss
-        final_loss.backward()
+        contrastive_loss.backward()
         optim.step()
         label_loss += contrastive_loss_labels.detach().cpu().item()
         image_loss += contrastive_loss_images.detach().cpu().item()
         total_inst_segmentation_loss += inst_segmentation_loss.detach().cpu().item()
         total_classification_loss += classification_loss.detach().cpu().item()
-        total_loss += final_loss.detach().cpu().item()
+        total_loss += contrastive_loss.detach().cpu().item()
         total_samples += 1
-        # Disable per-step logs for sweeps.
-        # wandb.log(
-        #     {
-        #         "train/contrastive_loss_labels": contrastive_loss_labels,
-        #         "train/contrastive_loss_images": contrastive_loss_images,
-        #         "train/instance_loss": inst_segmentation_loss,
-        #         "train/instance_accuracy": accuracy,
-        #         "train/semseg_loss": classification_loss,
-        #         "train/semseg_accuracy": classification_accuracy,
-        #         "train/loss_sum": final_loss,
-        #         "train/image_label_ratio": image_label_ratio,
-        #         "train/lang_label_ratio": lang_label_ratio,
-        #     }
-        # )
 
     wandb.log(
         {
@@ -281,60 +223,36 @@ def test(
             xyzs = clip_data_dict["xyz"].to(device)
             clip_labels = clip_data_dict["clip_vector"].to(device)
             clip_image_labels = clip_data_dict["clip_image_vector"].to(device)
-            weights = torch.exp(-exp_decay_coeff * clip_data_dict["distance"]).to(
+            image_weights = torch.exp(-exp_decay_coeff * clip_data_dict["distance"]).to(
                 device
             )
             label_weights = clip_data_dict["semantic_weight"].to(device)
-            (
-                predicted_label_latents,
-                predicted_image_latents,
-                segmentation_logits,
-            ) = labelling_model(xyzs)
             image_label_index = clip_data_dict["img_idx"].to(device).reshape(-1, 1)
             language_label_index = clip_data_dict["label"].to(device).reshape(-1, 1)
             instances = clip_data_dict["instance"].to(device).reshape(-1)
-            batch_size = len(image_label_index)
-            image_label_mask = (
-                image_label_index != image_label_index.t()
-            ).float() + torch.eye(batch_size, device=device)
-            language_label_mask = (
-                language_label_index != language_label_index.t()
-            ).float() + torch.eye(batch_size, device=device)
-
-            image_label_mask.requires_grad = False
-            language_label_mask.requires_grad = False
+            (
+                predicted_label_loss_batch,
+                predicted_label_latents,
+                predicted_image_loss_batch,
+                predicted_image_latents,
+                inst_segmentation_loss,
+                accuracy,
+            ) = labelling_model(
+                xyzs,
+                clip_labels,
+                clip_image_labels,
+                language_label_index,
+                image_label_index,
+                label_weights,
+                image_weights,
+                instances,
+            )
             # Use the predicted labels, the ground truth labels, and the masks to
             # compute the contrastive loss.
-            contrastive_loss_labels = labelling_model.compute_loss(
-                predicted_label_latents,
-                clip_labels,
-                label_mask=language_label_mask,
-                weights=label_weights,
-            )
-            contrastive_loss_images = labelling_model.compute_loss(
-                predicted_image_latents,
-                clip_image_labels,
-                label_mask=image_label_mask,
-                weights=weights,
-            )
-            instance_mask = instances != -1
-            inst_segmentation_loss = F.cross_entropy(
-                segmentation_logits[instance_mask], instances[instance_mask]
-            )
-            accuracy = (
-                (
-                    segmentation_logits[instance_mask].argmax(dim=-1)
-                    == instances[instance_mask]
-                )
-                .float()
-                .mean()
-            )
-            accuracy = accuracy.detach().cpu().item()
-            del (
-                image_label_mask,
-                image_label_index,
-                language_label_mask,
-            )
+            contrastive_loss_labels = predicted_image_loss_batch.mean()
+            contrastive_loss_images = predicted_label_loss_batch.mean()
+            inst_segmentation_loss = inst_segmentation_loss.mean()
+            accuracy = accuracy.mean()
 
             class_probs = classifier.calculate_classifications(
                 model_text_features=predicted_label_latents,
@@ -375,19 +293,6 @@ def test(
             total_classification_accuracy += classification_accuracy
             total_classification_loss += classification_loss.detach().cpu().item()
             total_samples += 1
-
-            # # Disable per-step logs for sweeps.
-            # wandb.log(
-            #     {
-            #         "test/contrastive_loss_label": contrastive_loss_labels,
-            #         "test/contrastive_loss_image": contrastive_loss_images,
-            #         "test/instance_loss": inst_segmentation_loss,
-            #         "test/instance_accuracy": accuracy,
-            #         "test/semseg_loss": classification_loss,
-            #         "test/semseg_accuracy": classification_accuracy,
-            #         "test/loss_sum": final_loss,
-            #     }
-            # )
 
     wandb.log(
         {
@@ -618,12 +523,14 @@ def main(cfg):
         batch_size=batch_multiplier * cfg.point_batch_size,
         sampler=label_sampler,
         pin_memory=True,
+        num_workers=cfg.num_workers,
     )
     clip_test_loader = DataLoader(
         clip_test_dataset,
         batch_size=cfg.point_batch_size,
         shuffle=False,
         pin_memory=True,
+        num_workers=cfg.num_workers,
     )
 
     logging.info(f"Train human labelled point sizes: {len(parent_train_dataset)}")
@@ -713,6 +620,7 @@ def main(cfg):
     wandb.config.web_labelled_points = len(clip_train_dataset) - len(
         parent_train_dataset
     )
+    logging.info("Running epoch {epoch} out of {cfg.epochs}")
 
     while epoch < cfg.epochs:
         train(

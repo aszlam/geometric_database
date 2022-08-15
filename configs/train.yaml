@@ -5,7 +5,7 @@ defaults:
 
 device: cuda
 use_cache: True
-point_batch_size: 12544
+point_batch_size: 16000
 model_type: hash
 
 seed: 42
@@ -15,7 +15,8 @@ image_to_label_loss_ratio: 1.0
 label_to_image_loss_ratio: 1.0
 instance_loss_scale: 5.0
 label_voxel_count: 3e6
-dataparallel: false
+dataparallel: true
+num_workers: 10
 
 # Number of ground truth labeled images
 num_inst_segmented_images: 5
@@ -27,7 +28,7 @@ deterministic_id: true
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
 cache_only_run: false
 
-save_directory: "habitat_{}_detic_lseg_labels_${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
 web_models:
   clip: "ViT-B/32"

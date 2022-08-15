@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 from gridencoder import GridEncoder
 
 import torch
@@ -116,7 +116,7 @@ class GridCLIPModel(nn.Module):
         self._max_bounds = self._max_bounds.to(device)
         self._min_bounds = self._min_bounds.to(device)
 
-    def forward(self, x: torch.Tensor, bounds: Optional[float] = None):
+    def compute_latents(self, x: torch.Tensor, bounds: Optional[float] = None):
         if bounds is None:
             max_bounds, min_bounds = self._max_bounds.to(x.device), self._min_bounds.to(
                 x.device
@@ -140,6 +140,46 @@ class GridCLIPModel(nn.Module):
         image_latent = self._image_head(image_latent)
         return label_latent, image_latent, segmentation_logits
 
+    def forward(
+        self,
+        x: torch.Tensor,
+        actual_label_latents: torch.Tensor,
+        actual_image_latents: torch.Tensor,
+        actual_label_indices: torch.Tensor,
+        actual_image_indices: torch.Tensor,
+        label_weights: torch.Tensor,
+        image_weights: torch.Tensor,
+        instance_labels: torch.Tensor,
+    ) -> Tuple[torch.Tensor]:
+        # Given all the necessary ingredients, compute the elementwise loss.
+        label_latent, image_latent, segmentation_logits = self.compute_latents(x)
+        label_loss_batch = self.compute_full_loss(
+            label_latent,
+            actual_label_latents,
+            actual_label_index=actual_label_indices,
+            weights=label_weights,
+        )
+        image_loss_batch = self.compute_full_loss(
+            image_latent,
+            actual_image_latents,
+            actual_label_index=actual_image_indices,
+            weights=image_weights,
+        )
+        (
+            instanse_loss_batch,
+            instance_accuracy,
+        ) = self.compute_instance_loss_and_accuracy(
+            instance_logits=segmentation_logits, instance_labels=instance_labels
+        )
+        return (
+            label_loss_batch.mean(),
+            label_latent,
+            image_loss_batch.mean(),
+            image_latent,
+            instanse_loss_batch,
+            instance_accuracy,
+        )
+
     def to(self, device):
         self._grid_model = self._grid_model.to(device)
         self._post_grid = self._post_grid.to(device)
@@ -150,7 +190,11 @@ class GridCLIPModel(nn.Module):
         return self
 
     def compute_loss(
-        self, predicted_latents, actual_latents, label_mask=None, weights=None
+        self,
+        predicted_latents: torch.Tensor,
+        actual_latents: torch.Tensor,
+        label_mask: torch.Tensor = None,
+        weights: torch.Tensor = None,
     ):
         temp = torch.exp(self.temperature)
         sim = torch.einsum("i d, j d -> i j", predicted_latents, actual_latents) * temp
@@ -159,12 +203,57 @@ class GridCLIPModel(nn.Module):
             sim = sim * label_mask
             del label_mask
         labels = torch.arange(len(predicted_latents), device=predicted_latents.device)
-        if weights is None:
-            loss = (F.cross_entropy(sim, labels) + F.cross_entropy(sim.t(), labels)) / 2
-        else:
-            loss = (
-                F.cross_entropy(sim, labels, reduction="none")
-                + F.cross_entropy(sim.t(), labels, reduction="none")
-            ) / 2
-            loss = (loss * weights).mean()
+        loss = (
+            F.cross_entropy(sim, labels, reduction="none")
+            + F.cross_entropy(sim.t(), labels, reduction="none")
+        ) / 2
+        if weights is not None:
+            loss = loss * weights
         return loss
+
+    @torch.no_grad()
+    def compute_label_mask(self, label_index: torch.Tensor):
+        batch_size = label_index.size(0)
+        label_mask = (label_index != label_index.t()).float() + torch.eye(
+            batch_size, device=label_index.device
+        )
+        return label_mask
+
+    def compute_full_loss(
+        self,
+        predicted_latents: torch.Tensor,
+        actual_latents: torch.Tensor,
+        actual_label_index: torch.Tensor,
+        weights: torch.Tensor,
+    ):
+        label_mask = self.compute_label_mask(actual_label_index)
+        return self.compute_loss(
+            predicted_latents=predicted_latents,
+            actual_latents=actual_latents,
+            label_mask=label_mask,
+            weights=weights,
+        )
+
+    def compute_instance_loss_and_accuracy(
+        self,
+        instance_logits: torch.Tensor,
+        instance_labels: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        instance_mask = instance_labels != -1
+        if not torch.all(instance_labels == -1):
+            inst_segmentation_loss = F.cross_entropy(
+                instance_logits[instance_mask], instance_labels[instance_mask]
+            )
+            accuracy = (
+                (
+                    instance_logits[instance_mask].argmax(dim=-1)
+                    == instance_labels[instance_mask]
+                )
+                .float()
+                .mean()
+            )
+            accuracy = accuracy.detach()
+        else:
+            inst_segmentation_loss = torch.zeros(1, device=instance_logits.device)
+            accuracy = torch.ones(1, device=instance_logits.device)
+        return inst_segmentation_loss, accuracy
