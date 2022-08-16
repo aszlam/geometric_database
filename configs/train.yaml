@@ -25,7 +25,7 @@ num_workers: 10
 # Number of ground truth labeled images
 num_inst_segmented_images: 5
 num_sem_segmented_images: 96
-num_web_segmented_images: 135
+num_web_segmented_images: 5
 gt_segmentation_baseline: false
 deterministic_id: true
 

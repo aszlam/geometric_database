@@ -1,3 +1,4 @@
+import logging
 import clip
 import einops
 import os
@@ -120,6 +121,7 @@ class DeticDenseLabelledDataset(Dataset):
         self._batch_size = batch_size
         self._device = device
         self._detic_threshold = detic_threshold
+        self._subsample_prob = subsample_prob
 
         self._label_xyz = []
         self._label_rgb = []
@@ -243,7 +245,9 @@ class DeticDenseLabelledDataset(Dataset):
                             einops.repeat(image_feature, "d -> b d", b=total_points)
                         )
                         self._label_idx.append(torch.ones(total_points) * label_idx)
-                        self._distance.append(torch.ones(total_points) * self.LSEG_IMAGE_DISTANCE)
+                        self._distance.append(
+                            torch.ones(total_points) * self.LSEG_IMAGE_DISTANCE
+                        )
                 # Since they all get the same image, here label idx is increased once
                 # at the very end.
                 label_idx += 1
@@ -277,7 +281,23 @@ class DeticDenseLabelledDataset(Dataset):
             torch.ones_like(self._text_ids) * -1
         ).long()  # We don't have instance ID from this dataset.
 
+        self._resample()
+
         print(len(self._label_xyz))
+
+    def _resample(self):
+        resampled_indices = torch.rand(len(self._label_xyz)) < self._subsample_prob
+        logging.info(
+            f"Resampling dataset down from {len(self._label_xyz)} points to {resampled_indices.long().sum().item()} points."
+        )
+        self._label_xyz = self._label_xyz[resampled_indices]
+        self._label_rgb = self._label_rgb[resampled_indices]
+        self._label_weight = self._label_weight[resampled_indices]
+        self._image_features = self._image_features[resampled_indices]
+        self._text_ids = self._text_ids[resampled_indices]
+        self._label_idx = self._label_idx[resampled_indices]
+        self._distance = self._distance[resampled_indices]
+        self._instance = self._instance[resampled_indices]
 
     def __getitem__(self, idx):
         # Create a dictionary with all relevant results.
@@ -323,6 +343,14 @@ class DeticDenseLabelledDataset(Dataset):
             ].test_score_thresh = output_score_threshold
         self._predictor = predictor
 
+    def find_in_class(self, classname):
+        try:
+            return self._all_classes.index(classname)
+        except ValueError:
+            ret_value = len(self._all_classes) + self._unfound_offset
+            self._unfound_offset += 1
+            return ret_value
+
     def _setup_lseg(self):
         self._lseg_classes = [
             "floor",
@@ -334,16 +362,11 @@ class DeticDenseLabelledDataset(Dataset):
         self._num_true_lseg_classes = len(self._lseg_classes)
         self._all_lseg_classes = self._lseg_classes + ["Other"]
 
-        def find_in_class(idx, classname):
-            try:
-                return self._all_classes.index(classname)
-            except ValueError:
-                return len(self._all_classes) + idx
-
+        self._unfound_offset = 0
         # Figure out the class labels.
         self._lseg_class_labels = {
-            classname: find_in_class(idx, classname)
-            for idx, classname in enumerate(self._all_lseg_classes)
+            classname: self.find_in_class(classname)
+            for classname in self._all_lseg_classes
         }
         # We will try to classify all the classes, but will use LSeg labels for classes that
         # are not identified by Detic.
