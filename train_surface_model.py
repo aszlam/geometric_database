@@ -131,18 +131,6 @@ def train(
         ).float() + torch.eye(batch_size, device=device)
 
         # For logging purposes, keep track of negative samples per point.
-        image_label_ratio = (
-            (image_label_mask.sum() / torch.numel(image_label_mask))
-            .detach()
-            .cpu()
-            .item()
-        )
-        lang_label_ratio = (
-            (language_label_mask.sum() / torch.numel(language_label_mask))
-            .detach()
-            .cpu()
-            .item()
-        )
         image_label_mask.requires_grad = False
         language_label_mask.requires_grad = False
         # Use the predicted labels, the ground truth labels, and the masks to
@@ -191,7 +179,7 @@ def train(
             # Now figure out semantic accuracy and loss.
             semseg_mask = torch.logical_and(
                 language_label_index != 0,
-                language_label_index < classifier.total_label_classes,
+                language_label_index <= classifier.total_label_classes,
             ).squeeze(-1)
             if not torch.any(semseg_mask):
                 classification_loss = 0
@@ -199,7 +187,8 @@ def train(
             else:
                 # Figure out the right classes.
                 masked_class_prob = class_probs[semseg_mask]
-                masked_labels = language_label_index[semseg_mask].squeeze(-1).long()
+                # Minus one since we are dropping the class "Other".
+                masked_labels = language_label_index[semseg_mask].squeeze(-1).long() - 1
                 classification_accuracy = (
                     (masked_class_prob.argmax(dim=-1) == masked_labels).float().mean()
                 )
@@ -258,6 +247,7 @@ def train(
 def test(
     clip_test_loader,
     labelling_model,
+    optim,
     epoch: int,
     classifier: ClassificationExtractor,
     device=DEVICE,
@@ -347,7 +337,7 @@ def test(
             # Now figure out semantic accuracy and loss.
             semseg_mask = torch.logical_and(
                 language_label_index != 0,
-                language_label_index < classifier.total_label_classes,
+                language_label_index <= classifier.total_label_classes,
             ).squeeze(-1)
             if not torch.any(semseg_mask):
                 classification_loss = torch.zeros_like(contrastive_loss_images)
@@ -355,7 +345,7 @@ def test(
             else:
                 # Figure out the right classes.
                 masked_class_prob = class_probs[semseg_mask]
-                masked_labels = language_label_index[semseg_mask].squeeze(-1).long()
+                masked_labels = language_label_index[semseg_mask].squeeze(-1).long() - 1
                 classification_accuracy = (
                     (masked_class_prob.argmax(dim=-1) == masked_labels).float().mean()
                 )
@@ -415,6 +405,11 @@ def test(
     torch.save(
         to_save,
         f"outputs/implicit_models/{save_directory}/implicit_scene_label_model_{epoch}.pt",
+    )
+    # Save the optimizer as well.
+    torch.save(
+        optim.state_dict(),
+        f"outputs/implicit_models/{save_directory}/implicit_scene_label_model_optimizer_{epoch}.pt",
     )
     torch.save(
         to_save,
@@ -603,6 +598,7 @@ def main(cfg):
             image_rep_size=parent_train_dataset.image_representation_size,
             text_rep_size=parent_train_dataset.text_representation_size,
             segmentation_classes=1024,  # Quick patch
+            num_levels=cfg.num_grid_levels,
             max_coords=max_coords,
             min_coords=min_coords,
         )
@@ -659,15 +655,18 @@ def main(cfg):
                 )
             )
             while os.path.exists(model_path):
-                epoch += 5
+                epoch += EVAL_EVERY
                 model_path = "outputs/implicit_models/{}/implicit_scene_label_model_{}.pt".format(
                     save_directory, epoch
                 )
-            epoch -= 5
+            epoch -= EVAL_EVERY
             model_path = (
                 "outputs/implicit_models/{}/implicit_scene_label_model_{}.pt".format(
                     save_directory, epoch
                 )
+            )
+            optim_path = "outputs/implicit_models/{}/implicit_scene_label_model_optimizer_{}.pt".format(
+                save_directory, epoch
             )
             logging.info(f"Resuming job from: {model_path}")
             # This has already started training, let's load the model
@@ -675,6 +674,14 @@ def main(cfg):
                 model_path,
                 map_location=cfg.device,
             )
+            optim = torch.optim.Adam(
+                labelling_model.parameters(),
+                lr=cfg.lr,
+                betas=tuple(cfg.betas),
+                weight_decay=cfg.weight_decay,
+            )
+            if os.path.exists(optim_path):
+                optim.load_state_dict(torch.load(optim_path))
             resume = "allow"
             loaded = True
             epoch += 1
@@ -686,18 +693,17 @@ def main(cfg):
         )
         epoch = 0
         resume = False
+        optim = torch.optim.Adam(
+            labelling_model.parameters(),
+            lr=cfg.lr,
+            betas=tuple(cfg.betas),
+            weight_decay=cfg.weight_decay,
+        )
 
     dataparallel = False
     if torch.cuda.device_count() > 1 and cfg.dataparallel:
         labelling_model = ImplicitDataparallel(labelling_model)
         dataparallel = True
-
-    optim = torch.optim.Adam(
-        labelling_model.parameters(),
-        lr=1e-4,
-        betas=(0.9, 0.999),
-        weight_decay=0.01,
-    )
 
     if cfg.deterministic_id:
         run_id = f"grid_{cfg.scene.base}_{cfg.scene.image_size}i{cfg.num_inst_segmented_images}s{cfg.num_sem_segmented_images}w{cfg.num_web_segmented_images}"
@@ -705,7 +711,7 @@ def main(cfg):
         run_id = wandb.util.generate_id()
 
     wandb.init(
-        project="implicit_semantic_model_grid",
+        project=cfg.project,
         id=run_id,
         tags=[
             f"model/{cfg.model_type}",
@@ -726,7 +732,7 @@ def main(cfg):
         disable_tqdm = True
     else:
         disable_tqdm = False
-    while epoch < cfg.epochs:
+    while epoch <= cfg.epochs:
         train(
             clip_train_loader,
             labelling_model,
@@ -743,6 +749,7 @@ def main(cfg):
             test(
                 clip_test_loader,
                 labelling_model,
+                optim,
                 epoch,
                 classifier,
                 cfg.device,

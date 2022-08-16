@@ -152,8 +152,17 @@ class GridCLIPModel(nn.Module):
     def compute_loss(
         self, predicted_latents, actual_latents, label_mask=None, weights=None
     ):
+        normalized_predicted_latents = F.normalize(predicted_latents, p=2, dim=-1)
+        normalized_actual_latents = F.normalize(actual_latents, p=2, dim=-1)
         temp = torch.exp(self.temperature)
-        sim = torch.einsum("i d, j d -> i j", predicted_latents, actual_latents) * temp
+        sim = (
+            torch.einsum(
+                "i d, j d -> i j",
+                normalized_predicted_latents,
+                normalized_actual_latents,
+            )
+            * temp
+        )
         # Zero out the cells where the labels are same.
         if label_mask is not None:
             sim = sim * label_mask

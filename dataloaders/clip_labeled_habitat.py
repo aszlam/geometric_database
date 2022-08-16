@@ -13,7 +13,7 @@ from sentence_transformers import SentenceTransformer
 class ClipLabelledLocation(Dataset):
     PROMPT = "A "
     EMPTY = "Other"
-    FAR_DISTANCE = 2.0
+    FAR_DISTANCE = 10.0
 
     def __init__(
         self,
@@ -130,12 +130,14 @@ class ClassificationExtractor:
         sentence_model_name: str,
         class_names: List[str],
         device: str = "cuda",
+        image_weight: float = 1.0,
+        label_weight: float = 5.0,
     ):
         clip_model, _ = clip.load(clip_model_name, device=device)
         sentence_model = SentenceTransformer(sentence_model_name, device=device)
 
         # Adding this class in the beginning since the labels are 1-indexed.
-        text_strings = [self.EMPTY_CLASS]
+        text_strings = []
         for name in class_names:
             text_strings.append(self.PROMPT + name.replace("-", " ").replace("_", " "))
         with torch.no_grad():
@@ -156,6 +158,9 @@ class ClassificationExtractor:
         self._sentence_features = F.normalize(all_embedded_text, p=2, dim=-1)
         self._clip_text_features = F.normalize(clip_encoded_text, p=2, dim=-1)
 
+        self._image_weight = image_weight
+        self._label_weight = label_weight
+
     def calculate_classifications(
         self, model_text_features: torch.Tensor, model_image_features: torch.Tensor
     ):
@@ -174,8 +179,8 @@ class ClassificationExtractor:
         assert text_logits.size(-1) == self.total_label_classes
         assert image_logits.size(-1) == self.total_label_classes
 
-        # Figure out sum of probabilities.
+        # Figure out weighted sum of probabilities.
         return (
-            F.softmax(self.LOGIT_TEMP * text_logits, dim=-1)
-            + F.softmax(self.LOGIT_TEMP * image_logits, dim=-1)
-        ) / 2.0
+            self._label_weight * F.softmax(self.LOGIT_TEMP * text_logits, dim=-1)
+            + self._image_weight * F.softmax(self.LOGIT_TEMP * image_logits, dim=-1)
+        ) / (self._label_weight + self._image_weight)

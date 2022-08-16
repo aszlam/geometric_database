@@ -3,16 +3,20 @@ defaults:
   - scene: hm3d_00250
   - override hydra/launcher: submitit_slurm
 
+project: implicit_semantic_model_grid_hf
 device: cuda
 use_cache: True
 point_batch_size: 12544
+
+# Model specs
 model_type: hash
+num_grid_levels: 19
 
 seed: 42
 epochs: 1000
 exp_decay_coeff: 0.5
 image_to_label_loss_ratio: 1.0
-label_to_image_loss_ratio: 1.0
+label_to_image_loss_ratio: 5.0
 instance_loss_scale: 5.0
 label_voxel_count: 3e6
 dataparallel: false
@@ -28,7 +32,14 @@ deterministic_id: true
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
 cache_only_run: false
 
-save_directory: "habitat_{}_detic_lseg_labels_${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+# Learning rate data
+lr: 1e-4
+weight_decay: 0.001
+betas:
+  - 0.9
+  - 0.999
+
+save_directory: "hf/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
 web_models:
   clip: "ViT-B/32"
@@ -48,11 +59,11 @@ hydra:
     params:
       scene: hm3d_00250,hm3d_00732,hm3d_00263,hm3d_00099,apt_0,apt_2
       # num_sem_segmented_images: 0
-      num_sem_segmented_images: 0,6,12,24,48,96
-      num_web_segmented_images: 5,15,45,135
+      num_sem_segmented_images: 0,6,24,96
+      num_web_segmented_images: 0,5,15,45,135
   launcher:
-    timeout_min: 360
-    # timeout_min: 70
+    # timeout_min: 360
+    timeout_min: 30
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1

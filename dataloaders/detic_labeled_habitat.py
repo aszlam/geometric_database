@@ -236,7 +236,7 @@ class DeticDenseLabelledDataset(Dataset):
                             einops.repeat(image_feature, "d -> b d", b=total_points)
                         )
                         self._label_idx.append(torch.ones(total_points) * label_idx)
-                        self._distance.append(torch.ones(total_points) * 2.0)
+                        self._distance.append(torch.ones(total_points) * 10.0)
                 # Since they all get the same image, here label idx is increased once
                 # at the very end.
                 label_idx += 1
@@ -281,7 +281,9 @@ class DeticDenseLabelledDataset(Dataset):
             "instance": self._instance[idx].long(),
             "img_idx": self._label_idx[idx].long(),
             "distance": self._distance[idx].float(),
-            "clip_vector": self._text_id_to_feature.get(self._text_ids[idx].item()).float(),
+            "clip_vector": self._text_id_to_feature.get(
+                self._text_ids[idx].item()
+            ).float(),
             "clip_image_vector": self._image_features[idx].float(),
             "semantic_weight": self._label_weight[idx].float(),
         }
