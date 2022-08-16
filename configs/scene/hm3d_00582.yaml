@@ -1,0 +1,6 @@
+base: hm3d_00582
+filepath: 
+  - "/checkpoint/notmahi/data/hm3d_semantic/data/versioned_data/hm3d-1.0/hm3d/train/00582-TYDavTf8oyy/TYDavTf8oyy.basis.glb"
+grid_size: 10
+image_size: 512
+subsample_prob: 0.2

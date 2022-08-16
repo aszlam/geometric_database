@@ -7,6 +7,7 @@ import tqdm
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
 from dataloaders.habitat_loaders import HabitatViewDataset
+from dataloaders.scannet_200_classes import CLASS_LABELS_200
 from sentence_transformers import SentenceTransformer
 
 # Some basic setup:
@@ -91,6 +92,9 @@ def get_clip_embeddings(vocabulary, prompt="a "):
 
 
 class DeticDenseLabelledDataset(Dataset):
+    LSEG_LABEL_WEIGHT = 0.1
+    LSEG_IMAGE_DISTANCE = 10.0
+
     def __init__(
         self,
         habitat_view_dataset: HabitatViewDataset,
@@ -100,6 +104,7 @@ class DeticDenseLabelledDataset(Dataset):
         batch_size: int = 1,
         detic_threshold: float = 0.3,
         num_images_to_label: int = 300,
+        subsample_prob: float = 0.2,
     ):
         dataset = habitat_view_dataset
 
@@ -215,7 +220,7 @@ class DeticDenseLabelledDataset(Dataset):
                 predict = predicts[0]
 
                 reshaped_coordinates = einops.rearrange(
-                    self.resize(coordinates), "c h w -> h w c"
+                    self.resize_coords(coordinates), "c h w -> h w c"
                 )
                 reshaped_rgb = einops.rearrange(self.resize(image), "c h w -> h w c")
 
@@ -230,13 +235,15 @@ class DeticDenseLabelledDataset(Dataset):
                         self._label_rgb.append(reshaped_rgb[pred_mask])
                         # Ideally, this should give all classes their true class label.
                         self._text_ids.append(torch.ones(total_points) * class_text_id)
-                        # Uniform label confidence of 0.25
-                        self._label_weight.append(torch.ones(total_points) * 0.25)
+                        # Uniform label confidence of LSEG_LABEL_WEIGHT
+                        self._label_weight.append(
+                            torch.ones(total_points) * self.LSEG_LABEL_WEIGHT
+                        )
                         self._image_features.append(
                             einops.repeat(image_feature, "d -> b d", b=total_points)
                         )
                         self._label_idx.append(torch.ones(total_points) * label_idx)
-                        self._distance.append(torch.ones(total_points) * 10.0)
+                        self._distance.append(torch.ones(total_points) * self.LSEG_IMAGE_DISTANCE)
                 # Since they all get the same image, here label idx is increased once
                 # at the very end.
                 label_idx += 1
@@ -291,16 +298,17 @@ class DeticDenseLabelledDataset(Dataset):
     def __len__(self):
         return len(self._label_xyz)
 
-    def _setup_detic_all_classes(self, habitat_view_data):
+    def _setup_detic_all_classes(self, habitat_view_data: HabitatViewDataset):
         # Unifying all the class labels.
         predictor = DefaultPredictor(cfg)
-        self._all_classes = (
-            ["Other"]
-            + list(habitat_view_data._id_to_name.values())
-            + metadata.thing_classes
-        )
+        prebuilt_class_names = list(habitat_view_data._id_to_name.values())
+        prebuild_class_set = set(prebuilt_class_names)
+        filtered_new_classes = [
+            x for x in CLASS_LABELS_200 if x not in prebuild_class_set
+        ]
+        self._all_classes = ["Other"] + prebuilt_class_names + filtered_new_classes
         self._all_classes = [
-            x.replace("-", " ").replace("_", " ") for x in self._all_classes
+            x.replace("-", " ").replace("_", " ").lower() for x in self._all_classes
         ]
         new_metadata = MetadataCatalog.get("__unused")
         new_metadata.thing_classes = self._all_classes
@@ -381,6 +389,9 @@ class DeticDenseLabelledDataset(Dataset):
 
         self.transform = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         self.resize = transforms.Resize(224)
+        self.resize_coords = transforms.Resize(
+            224, interpolation=transforms.InterpolationMode.NEAREST
+        )
 
         self.evaluator = LSeg_MultiEvalModule(model, scales=self.scales, flip=True).to(
             self._device

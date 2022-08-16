@@ -2,5 +2,5 @@ base: hm3d_00263
 filepath: 
   - "/checkpoint/notmahi/data/hm3d_semantic/data/versioned_data/hm3d-1.0/hm3d/train/00263-GGBvSFddQgs/GGBvSFddQgs.basis.glb"
 grid_size: 10
-image_size: 224
+image_size: 512
 subsample_prob: 0.2
