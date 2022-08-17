@@ -199,9 +199,9 @@ class DeticDenseLabelledDataset(Dataset):
                     self._distance.append(torch.zeros(total_points))
                     label_idx += 1
 
+        # First delete leftover Detic predictors
         del self._predictor
         # Now, get to LSeg
-        # First delete leftover Detic predictors
         self._setup_lseg()
         for idx, data_dict in tqdm.tqdm(enumerate(dataloader), total=len(dataset)):
             if idx not in images_to_label:
@@ -211,20 +211,19 @@ class DeticDenseLabelledDataset(Dataset):
             for image, coordinates in zip(rgb, xyz):
                 # Now figure out the LSeg lables.
                 with torch.no_grad():
+                    unsqueezed_image = image.unsqueeze(0).cuda()
                     resized_image = self.resize(image).unsqueeze(0).cuda()
-                    tfm_image = self.transform(resized_image)
+                    tfm_image = self.transform(unsqueezed_image)
                     outputs = self.evaluator.parallel_forward(
-                        tfm_image, self._all_lseg_classes
+                        tfm_image, self._all_lseg_classes + self._all_classes
                     )
                     image_feature = clip_model.encode_image(resized_image).squeeze(0)
                     image_feature = image_feature.cpu()
                     predicts = [torch.max(output, 1)[1].cpu() for output in outputs]
                 predict = predicts[0]
 
-                reshaped_coordinates = einops.rearrange(
-                    self.resize_coords(coordinates), "c h w -> h w c"
-                )
-                reshaped_rgb = einops.rearrange(self.resize(image), "c h w -> h w c")
+                reshaped_coordinates = einops.rearrange(coordinates, "c h w -> h w c")
+                reshaped_rgb = einops.rearrange(image, "c h w -> h w c")
 
                 for label in range(self._num_true_lseg_classes):
                     pred_mask = predict.squeeze(0) == label
@@ -352,15 +351,9 @@ class DeticDenseLabelledDataset(Dataset):
             return ret_value
 
     def _setup_lseg(self):
-        self._lseg_classes = [
-            "floor",
-            "ceiling",
-            "door",
-            "window",
-            "wall",
-        ]
+        self._lseg_classes = self._all_classes
         self._num_true_lseg_classes = len(self._lseg_classes)
-        self._all_lseg_classes = self._lseg_classes + ["Other"]
+        self._all_lseg_classes = self._lseg_classes  # + ["Other"]
 
         self._unfound_offset = 0
         # Figure out the class labels.
