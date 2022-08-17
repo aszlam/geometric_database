@@ -59,6 +59,7 @@ GRID_SIZE = 8
 NUM_INSTANCE_SEGMENTED_IMAGES = 5
 NUM_SEM_SEGMENTED_IMAGES = 50
 NUM_WEB_SEGMENTED_IMAGES = 300
+GT_SEMANTIC_WEIGHT = 10
 
 MODEL_TYPE = "hash"  # MLP or hash
 CACHE = True
@@ -432,6 +433,7 @@ def get_habitat_dataset(
     num_inst_segmented_images=NUM_INSTANCE_SEGMENTED_IMAGES,
     num_sem_segmented_images=NUM_SEM_SEGMENTED_IMAGES,
     num_web_segmented_images=NUM_WEB_SEGMENTED_IMAGES,
+    gt_semantic_weight: float = GT_SEMANTIC_WEIGHT,
 ):
     gt_segmentation_baseline = gt_segmentation_baseline or (
         num_web_segmented_images == 0
@@ -468,14 +470,18 @@ def get_habitat_dataset(
                 subsample_prob=point_subsample_prob,
                 return_nonsegmented_images=gt_segmentation_baseline,
                 num_inst_segmented_images=num_inst_segmented_images,
-                num_sem_segmented_images=num_sem_segmented_images
+                num_sem_segmented_images=num_sem_segmented_images,
                 # In the GT segmentation baseline, we get all image segmentation data.
             )
             # Convert to clip datasets
             clip_train_dataset = ClipLabelledLocation(
-                view_train_dataset, location_train_dataset, id_to_name=id_to_name
+                view_train_dataset,
+                location_train_dataset,
+                id_to_name=id_to_name,
+                semantic_weight=gt_semantic_weight,
             )
             torch.save(clip_train_dataset, cache_fp)
+    clip_train_dataset._semantic_weight = torch.tensor(gt_semantic_weight)
 
     if use_cache:
         cache_fp = (
@@ -492,9 +498,14 @@ def get_habitat_dataset(
                 # Return segmentation for all images in test.
             )
             clip_test_dataset = ClipLabelledLocation(
-                view_test_dataset, location_test_dataset, id_to_name=id_to_name
+                view_test_dataset,
+                location_test_dataset,
+                id_to_name=id_to_name,
+                semantic_weight=gt_semantic_weight,
             )
             torch.save(clip_test_dataset, cache_fp)
+
+    clip_test_dataset._semantic_weight = torch.tensor(gt_semantic_weight)
 
     if not gt_segmentation_baseline:
         clip_train_dataset_concat = ConcatDataset(
@@ -563,6 +574,7 @@ def main(cfg):
         num_inst_segmented_images=cfg.num_inst_segmented_images,
         num_sem_segmented_images=cfg.num_sem_segmented_images,
         num_web_segmented_images=cfg.num_web_segmented_images,
+        gt_semantic_weight=cfg.gt_semantic_weight,
     )
     if cfg.cache_only_run:
         # Caching is done, so we can exit now.

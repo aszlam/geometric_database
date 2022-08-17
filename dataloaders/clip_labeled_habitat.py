@@ -24,14 +24,14 @@ class ClipLabelledLocation(Dataset):
         sentence_encoding_model_name="all-mpnet-base-v2",
         device: str = "cuda",
         batch_size: int = 128,
+        semantic_weight: float = 10.0,
     ):
         self.loc_dataset = location_dataset
         model, _ = clip.load(clip_model_name, device=device)
         sentence_model = SentenceTransformer(
             sentence_encoding_model_name, device=device
         )
-        self._semantic_weight = 1.0
-        self._semantic_weight = torch.tensor(self._semantic_weight)
+        self._semantic_weight = torch.tensor(semantic_weight)
         self._id_to_clip_vector = {}
         self._view_to_clip_vector = {}
         self.resize = Resize(224)  # CLIP model has a fixed size input

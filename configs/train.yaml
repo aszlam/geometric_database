@@ -1,22 +1,22 @@
 defaults:
   - _self_
-  - scene: hm3d_00263
+  - scene: hm3d_00706
   - override hydra/launcher: submitit_slurm
 
-project: implicit_semantic_model_grid_hf
+project: implicit_semantic_model_grid_lf_50
 device: cuda
 use_cache: True
 point_batch_size: 12544
 
 # Model specs
 model_type: hash
-num_grid_levels: 19
+num_grid_levels: 16
 
 seed: 42
-epochs: 1000
+epochs: 200
 exp_decay_coeff: 0.5
 image_to_label_loss_ratio: 1.0
-label_to_image_loss_ratio: 5.0
+label_to_image_loss_ratio: 1.0
 instance_loss_scale: 5.0
 label_voxel_count: 3e6
 dataparallel: false
@@ -25,21 +25,22 @@ num_workers: 10
 # Number of ground truth labeled images
 num_inst_segmented_images: 5
 num_sem_segmented_images: 96
-num_web_segmented_images: 5
+num_web_segmented_images: 135
 gt_segmentation_baseline: false
-deterministic_id: true
+gt_semantic_weight: 50.0
+deterministic_id: true 
 
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
 cache_only_run: false
 
 # Learning rate data
 lr: 1e-4
-weight_decay: 0.001
+weight_decay: 0.01
 betas:
   - 0.9
   - 0.999
 
-save_directory: "hf/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "lf_gt/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
 web_models:
   clip: "ViT-B/32"
@@ -57,18 +58,20 @@ hydra:
     dir: multirun/${scene.base}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}
   sweeper:
     params:
-      scene: hm3d_00179,hm3d_00217,hm3d_00582,hm3d_00706
+      scene: hm3d_00250,hm3d_00263,hm3d_00179,hm3d_00217,hm3d_00582,hm3d_00706
+      # scene: hm3d_00263,hm3d_00179
       # num_sem_segmented_images: 0
       # num_sem_segmented_images: 0,6,24,96
-      num_sem_segmented_images: 0,96
+      num_sem_segmented_images: 0,24,96
       num_web_segmented_images: 0,135
+  
   launcher:
-    # timeout_min: 360
-    timeout_min: 30
+    timeout_min: 220
+    # timeout_min: 120
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1
-    mem_gb: 96
+    mem_gb: 128
     nodes: 1
     name: ${hydra.job.name}
     _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
@@ -77,4 +80,5 @@ hydra:
     additional_parameters: {}
     array_parallelism: 256
     setup: null
-    partition: scavenge
+    # partition: scavenge
+    partition: learnfair
