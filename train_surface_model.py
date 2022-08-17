@@ -207,6 +207,10 @@ def train(
         final_loss = contrastive_loss
         final_loss.backward()
         optim.step()
+        # Clip the temperature term for stability
+        labelling_model.temperature.data = torch.clamp(
+            labelling_model.temperature.data, max=np.log(100.0)
+        )
         label_loss += contrastive_loss_labels.detach().cpu().item()
         image_loss += contrastive_loss_images.detach().cpu().item()
         total_inst_segmentation_loss += inst_segmentation_loss.detach().cpu().item()
