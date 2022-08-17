@@ -82,7 +82,15 @@ class GridCLIPModel(nn.Module):
             input_dim=num_levels * level_dim,
             hidden_dim=mlp_width,
             hidden_depth=mlp_depth,
-            output_dim=image_rep_size + text_rep_size + segmentation_classes,
+            output_dim=image_rep_size + text_rep_size,
+            batchnorm=batchnorm,
+        )
+
+        self._segmentation_head = MLP(
+            input_dim=num_levels * level_dim,
+            hidden_dim=mlp_width,
+            hidden_depth=mlp_depth,
+            output_dim=segmentation_classes,
             batchnorm=batchnorm,
         )
         # Mini MLP for extra storage for image loss
@@ -112,6 +120,7 @@ class GridCLIPModel(nn.Module):
         self._grid_model = self._grid_model.to(device)
         self._post_grid = self._post_grid.to(device)
         self._image_head = self._image_head.to(device)
+        self._segmentation_head = self._segmentation_head.to(device)
         self.temperature.data = self.temperature.data.to(device)
         self._max_bounds = self._max_bounds.to(device)
         self._min_bounds = self._min_bounds.to(device)
@@ -130,13 +139,13 @@ class GridCLIPModel(nn.Module):
         grid_hash = self._grid_model(bounded_x, bound=1.0)
         result = self._post_grid(grid_hash)
         # label_latent, image_latent = torch.chunk(result, chunks=2, dim=-1)
-        label_latent, image_latent, segmentation_logits = (
+        label_latent, image_latent = (
             result[..., : self._text_rep_size],
-            result[
-                ..., self._text_rep_size : self._text_rep_size + self._image_rep_size
-            ],
-            result[..., self._text_rep_size + self._image_rep_size :],
+            result[..., self._text_rep_size :],
         )
+        # Adding a detach so that gradient only updates the segmentation head but not the
+        # grid has itself.
+        segmentation_logits = self._segmentation_head(grid_hash.detach())
         image_latent = self._image_head(image_latent)
         return label_latent, image_latent, segmentation_logits
 
@@ -144,6 +153,7 @@ class GridCLIPModel(nn.Module):
         self._grid_model = self._grid_model.to(device)
         self._post_grid = self._post_grid.to(device)
         self._image_head = self._image_head.to(device)
+        self._segmentation_head = self._segmentation_head.to(device)
         self._max_bounds = self._max_bounds.to(device)
         self._min_bounds = self._min_bounds.to(device)
         self.temperature.data = self.temperature.data.to(device)
