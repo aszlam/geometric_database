@@ -87,7 +87,7 @@ class GridCLIPModel(nn.Module):
         )
 
         self._segmentation_head = MLP(
-            input_dim=num_levels * level_dim,
+            input_dim=image_rep_size + text_rep_size,
             hidden_dim=mlp_width,
             hidden_depth=mlp_depth,
             output_dim=segmentation_classes,
@@ -145,7 +145,7 @@ class GridCLIPModel(nn.Module):
         )
         # Adding a detach so that gradient only updates the segmentation head but not the
         # grid has itself.
-        segmentation_logits = self._segmentation_head(grid_hash.detach())
+        segmentation_logits = self._segmentation_head(result)
         image_latent = self._image_head(image_latent)
         return label_latent, image_latent, segmentation_logits
 

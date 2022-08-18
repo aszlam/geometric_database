@@ -3,7 +3,7 @@ defaults:
   - scene: hm3d_00706
   - override hydra/launcher: submitit_slurm
 
-project: implicit_semantic_model_grid_lf_detach
+project: grid_lf_post_no_detach
 device: cuda
 use_cache: True
 point_batch_size: 12544
@@ -27,7 +27,7 @@ num_inst_segmented_images: 5
 num_sem_segmented_images: 96
 num_web_segmented_images: 135
 gt_segmentation_baseline: false
-gt_semantic_weight: 33.0
+gt_semantic_weight: 34.0
 deterministic_id: true 
 
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
@@ -40,7 +40,7 @@ betas:
   - 0.9
   - 0.999
 
-save_directory: "lf_detach/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "lf_post_no_detach/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
 web_models:
   clip: "ViT-B/32"
