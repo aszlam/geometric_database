@@ -615,6 +615,7 @@ def main(cfg):
             text_rep_size=parent_train_dataset.text_representation_size,
             segmentation_classes=1024,  # Quick patch
             num_levels=cfg.num_grid_levels,
+            level_dim=cfg.level_dim,
             max_coords=max_coords,
             min_coords=min_coords,
         )
