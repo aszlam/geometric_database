@@ -14,7 +14,7 @@ num_grid_levels: 16
 level_dim: 8  # So total dimension 128
 
 seed: 42
-epochs: 200
+epochs: 205
 exp_decay_coeff: 0.5
 image_to_label_loss_ratio: 1.0
 label_to_image_loss_ratio: 0.03
@@ -67,8 +67,8 @@ hydra:
       num_web_segmented_images: 0,135
   
   launcher:
-    timeout_min: 220
-    # timeout_min: 120
+    # timeout_min: 220
+    timeout_min: 10
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1

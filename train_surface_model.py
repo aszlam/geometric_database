@@ -2,11 +2,13 @@ import glob
 import logging
 import os
 import random
+from typing import Dict
 
 import hydra
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torchmetrics
 import tqdm
 from pathlib import Path
 from omegaconf import OmegaConf
@@ -64,6 +66,13 @@ GT_SEMANTIC_WEIGHT = 10
 MODEL_TYPE = "hash"  # MLP or hash
 CACHE = True
 
+# Set up the desired metrics.
+METRICS = {
+    "accuracy": torchmetrics.Accuracy,
+    "precision": torchmetrics.Precision,
+    "recall": torchmetrics.Recall,
+}
+
 
 def seed_everything(seed: int):
     random.seed(seed)
@@ -84,17 +93,15 @@ def train(
     label_to_image_loss_ratio=LABEL_TO_IMAGE_LOSS_SCALE,
     instance_loss_scale=INSTANCE_LOSS_SCALE,
     disable_tqdm=False,
+    metric_calculators: Dict[str, Dict[str, torchmetrics.Metric]] = {},
 ):
     total_loss = 0
     label_loss = 0
     image_loss = 0
     classification_loss = 0
-    classification_accuracy = 0
     total_inst_segmentation_loss = 0
-    total_accuracy = 0
     total_samples = 0
     total_classification_loss = 0
-    total_classification_accuracy = 0
     labelling_model.train()
     total = len(clip_train_loader)
     for clip_data_dict in tqdm.tqdm(
@@ -158,18 +165,15 @@ def train(
             inst_segmentation_loss = F.cross_entropy(
                 segmentation_logits[instance_mask], instances[instance_mask]
             )
-            accuracy = (
-                (
-                    segmentation_logits[instance_mask].argmax(dim=-1)
-                    == instances[instance_mask]
-                )
-                .float()
-                .mean()
-            )
-            accuracy = accuracy.detach().cpu().item()
+            if metric_calculators.get("instance"):
+                with torch.no_grad():
+                    for _, calculators in metric_calculators["instance"].items():
+                        # Update the calculators.
+                        _ = calculators(
+                            segmentation_logits[instance_mask], instances[instance_mask]
+                        )
         else:
             inst_segmentation_loss = torch.zeros_like(contrastive_loss_images)
-            accuracy = 1.0
 
         # Now figure out semantic segmentation.
         with torch.no_grad():
@@ -184,22 +188,20 @@ def train(
             ).squeeze(-1)
             if not torch.any(semseg_mask):
                 classification_loss = 0
-                classification_accuracy = 1.0
             else:
                 # Figure out the right classes.
                 masked_class_prob = class_probs[semseg_mask]
                 # Minus one since we are dropping the class "Other".
                 masked_labels = language_label_index[semseg_mask].squeeze(-1).long() - 1
-                classification_accuracy = (
-                    (masked_class_prob.argmax(dim=-1) == masked_labels).float().mean()
-                )
                 classification_loss = F.cross_entropy(
                     torch.log(masked_class_prob),
                     masked_labels,
                 )
+                if metric_calculators.get("semantic"):
+                    for _, calculators in metric_calculators["semantic"].items():
+                        # Update the calculators.
+                        _ = calculators(masked_class_prob, masked_labels)
 
-        total_accuracy += accuracy
-        total_classification_accuracy += classification_accuracy
         contrastive_loss = (
             image_to_label_loss_ratio * contrastive_loss_images
             + label_to_image_loss_ratio * contrastive_loss_labels
@@ -218,35 +220,23 @@ def train(
         total_classification_loss += classification_loss.detach().cpu().item()
         total_loss += final_loss.detach().cpu().item()
         total_samples += 1
-        # Disable per-step logs for sweeps.
-        # wandb.log(
-        #     {
-        #         "train/contrastive_loss_labels": contrastive_loss_labels,
-        #         "train/contrastive_loss_images": contrastive_loss_images,
-        #         "train/instance_loss": inst_segmentation_loss,
-        #         "train/instance_accuracy": accuracy,
-        #         "train/semseg_loss": classification_loss,
-        #         "train/semseg_accuracy": classification_accuracy,
-        #         "train/loss_sum": final_loss,
-        #         "train/image_label_ratio": image_label_ratio,
-        #         "train/lang_label_ratio": lang_label_ratio,
-        #     }
-        # )
 
-    wandb.log(
-        {
-            "train_avg/contrastive_loss_labels": label_loss / total_samples,
-            "train_avg/contrastive_loss_images": image_loss / total_samples,
-            "train_avg/instance_loss": total_inst_segmentation_loss / total_samples,
-            "train_avg/instance_accuracy": total_accuracy / total_samples,
-            "train_avg/semseg_loss": total_classification_loss / total_samples,
-            "train_avg/semseg_accuracy": total_classification_accuracy / total_samples,
-            "train_avg/loss_sum": total_loss / total_samples,
-            "train_avg/labelling_temp": torch.exp(
-                labelling_model.temperature.data.detach()
-            ),
-        }
-    )
+    to_log = {
+        "train_avg/contrastive_loss_labels": label_loss / total_samples,
+        "train_avg/contrastive_loss_images": image_loss / total_samples,
+        "train_avg/instance_loss": total_inst_segmentation_loss / total_samples,
+        "train_avg/semseg_loss": total_classification_loss / total_samples,
+        "train_avg/loss_sum": total_loss / total_samples,
+        "train_avg/labelling_temp": torch.exp(
+            labelling_model.temperature.data.detach()
+        ),
+    }
+    for metric_dict in metric_calculators.values():
+        for metric_name, metric in metric_dict.items():
+            to_log[f"train_avg/{metric_name}"] = metric.compute().detach().cpu().item()
+            metric.reset()
+
+    wandb.log(to_log)
 
 
 def test(
@@ -262,6 +252,7 @@ def test(
     instance_loss_scale=INSTANCE_LOSS_SCALE,
     save_directory=SAVE_DIRECTORY,
     saving_dataparallel=False,
+    metric_calculators: Dict[str, Dict[str, torchmetrics.Metric]] = {},
 ):
     labelling_model.eval()
     with torch.no_grad():
@@ -271,7 +262,6 @@ def test(
         image_loss = 0
         total_acc = 0
         classification_loss = 0
-        classification_accuracy = 0
         total_classification_loss = 0
         total_classification_accuracy = 0
         total_inst_segmentation_loss = 0
@@ -317,18 +307,19 @@ def test(
                 weights=weights,
             )
             instance_mask = instances != -1
-            inst_segmentation_loss = F.cross_entropy(
-                segmentation_logits[instance_mask], instances[instance_mask]
-            )
-            accuracy = (
-                (
-                    segmentation_logits[instance_mask].argmax(dim=-1)
-                    == instances[instance_mask]
+            if not torch.all(instances == -1):
+                inst_segmentation_loss = F.cross_entropy(
+                    segmentation_logits[instance_mask], instances[instance_mask]
                 )
-                .float()
-                .mean()
-            )
-            accuracy = accuracy.detach().cpu().item()
+                if metric_calculators.get("instance"):
+                    for _, calculators in metric_calculators["instance"].items():
+                        # Update the calculators.
+                        _ = calculators(
+                            segmentation_logits[instance_mask], instances[instance_mask]
+                        )
+            else:
+                inst_segmentation_loss = torch.zeros_like(contrastive_loss_images)
+
             del (
                 image_label_mask,
                 image_label_index,
@@ -346,14 +337,14 @@ def test(
             ).squeeze(-1)
             if not torch.any(semseg_mask):
                 classification_loss = torch.zeros_like(contrastive_loss_images)
-                classification_accuracy = 1.0
             else:
                 # Figure out the right classes.
                 masked_class_prob = class_probs[semseg_mask]
                 masked_labels = language_label_index[semseg_mask].squeeze(-1).long() - 1
-                classification_accuracy = (
-                    (masked_class_prob.argmax(dim=-1) == masked_labels).float().mean()
-                )
+                if metric_calculators.get("semantic"):
+                    for _, calculators in metric_calculators["semantic"].items():
+                        # Update the calculators.
+                        _ = calculators(masked_class_prob, masked_labels)
                 classification_loss = F.cross_entropy(
                     torch.log(masked_class_prob),
                     masked_labels,
@@ -370,39 +361,27 @@ def test(
             image_loss += contrastive_loss_images.cpu().item()
             total_loss += final_loss.cpu().item()
             total_inst_segmentation_loss += inst_segmentation_loss.cpu().item()
-            total_acc += accuracy
-            total_classification_accuracy += classification_accuracy
             total_classification_loss += classification_loss.detach().cpu().item()
             total_samples += 1
 
-            # # Disable per-step logs for sweeps.
-            # wandb.log(
-            #     {
-            #         "test/contrastive_loss_label": contrastive_loss_labels,
-            #         "test/contrastive_loss_image": contrastive_loss_images,
-            #         "test/instance_loss": inst_segmentation_loss,
-            #         "test/instance_accuracy": accuracy,
-            #         "test/semseg_loss": classification_loss,
-            #         "test/semseg_accuracy": classification_accuracy,
-            #         "test/loss_sum": final_loss,
-            #     }
-            # )
+    to_log = {
+        "test_avg/contrastive_loss_label": label_loss / total_samples,
+        "test_avg/contrastive_loss_image": image_loss / total_samples,
+        "test_avg/instance_loss": total_inst_segmentation_loss / total_samples,
+        "test_avg/semseg_loss": total_classification_loss / total_samples,
+        "test_avg/loss_sum": total_loss / total_samples,
+        "epoch": epoch,
+    }
+    for metric_dict in metric_calculators.values():
+        for metric_name, metric in metric_dict.items():
+            to_log[f"test_avg/{metric_name}"] = metric.compute().detach().cpu().item()
+            metric.reset()
 
-    wandb.log(
-        {
-            "test_avg/contrastive_loss_label": label_loss / total_samples,
-            "test_avg/contrastive_loss_image": image_loss / total_samples,
-            "test_avg/instance_loss": total_inst_segmentation_loss / total_samples,
-            "test_avg/instance_accuracy": total_acc / total_samples,
-            "test_avg/semseg_loss": total_classification_loss / total_samples,
-            "test_avg/semseg_accuracy": total_classification_accuracy / total_samples,
-            "test_avg/loss_sum": total_loss / total_samples,
-            "epoch": epoch,
-        }
-    )
+    wandb.log(to_log)
     logging.info(
         f"Epoch {epoch}: Instance acc: {total_acc / total_samples:0.3f}, segmentation acc: {total_classification_accuracy / total_samples:0.3f}"
     )
+    logging.info(str(to_log))
     if saving_dataparallel:
         to_save = labelling_model.module
     else:
@@ -580,6 +559,7 @@ def main(cfg):
         # Caching is done, so we can exit now.
         logging.info("Cache only run, exiting.")
         exit(0)
+
     # Setup our model with min and max coordinates.
     max_coords, _ = torch.stack(
         [
@@ -607,6 +587,26 @@ def main(cfg):
         class_names=label_set,
         device=cfg.device,
     )
+
+    # Set up our metrics on this dataset.
+    all_metric_calculators = {}
+
+    # Assume the classes go from 0 up to class labels.
+    class_count = {
+        "semantic": classifier.total_label_classes,
+        # "instance": clip_test_dataset.loc_dataset.instance_label.max().item(),
+        "instance": 1024,
+    }
+    average_style = ["micro", "macro", "weighted"]
+    for classes, counts in class_count.items():
+        all_metric_calculators[classes] = {}
+        for metric_name, metric_cls in METRICS.items():
+            for avg in average_style:
+                new_metric = metric_cls(num_classes=counts, average=avg).to(cfg.device)
+                all_metric_calculators[classes][
+                    f"{classes}_{metric_name}_{avg}"
+                ] = new_metric
+
     if cfg.model_type == "MLP":
         labelling_model = ImplicitCLIPModel()
     elif cfg.model_type == "hash":
@@ -761,6 +761,7 @@ def main(cfg):
             label_to_image_loss_ratio=cfg.label_to_image_loss_ratio,
             instance_loss_scale=cfg.instance_loss_scale,
             disable_tqdm=disable_tqdm,
+            metric_calculators=all_metric_calculators,
         )
         if epoch % EVAL_EVERY == 0:
             test(
@@ -776,6 +777,7 @@ def main(cfg):
                 instance_loss_scale=cfg.instance_loss_scale,
                 save_directory=save_directory,
                 saving_dataparallel=dataparallel,
+                metric_calculators=all_metric_calculators,
             )
         epoch += 1
 
