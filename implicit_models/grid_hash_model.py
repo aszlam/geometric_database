@@ -153,8 +153,6 @@ class GridCLIPModel(nn.Module):
         # )
         label_latent = self._post_grid_text(grid_hash)
         image_latent = self._post_grid_image(grid_hash)
-        # Adding a detach so that gradient only updates the segmentation head but not the
-        # grid has itself.
         segmentation_logits = self._segmentation_head(grid_hash)
         image_latent = self._image_head(image_latent)
         return label_latent, image_latent, segmentation_logits
