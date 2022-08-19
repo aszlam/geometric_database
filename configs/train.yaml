@@ -29,7 +29,7 @@ num_sem_segmented_images: 96
 num_web_segmented_images: 135
 gt_segmentation_baseline: false
 gt_semantic_weight: 34.0
-deterministic_id: true 
+deterministic_id: true
 
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
 cache_only_run: false
@@ -67,8 +67,8 @@ hydra:
       num_web_segmented_images: 0,135
   
   launcher:
-    # timeout_min: 220
-    timeout_min: 10
+    # timeout_min: 315
+    timeout_min: 20
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1
