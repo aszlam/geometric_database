@@ -321,9 +321,9 @@ class DeticDenseLabelledDataset(Dataset):
         # Unifying all the class labels.
         predictor = DefaultPredictor(cfg)
         prebuilt_class_names = list(habitat_view_data._id_to_name.values())
-        prebuild_class_set = set(prebuilt_class_names)
+        prebuilt_class_set = set(prebuilt_class_names)
         filtered_new_classes = [
-            x for x in CLASS_LABELS_200 if x not in prebuild_class_set
+            x for x in CLASS_LABELS_200 if x not in prebuilt_class_set
         ]
         self._all_classes = ["Other"] + prebuilt_class_names + filtered_new_classes
         self._all_classes = [

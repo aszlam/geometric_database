@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Iterable, List, Optional, Tuple, Union
 
 import torch
@@ -93,13 +94,21 @@ class HabitatViewDataset(Dataset):
                 semantic_class_names = sorted(
                     self.image_extractor.get_semantic_class_names()
                 )
+                # Keep 0 as the "not found/Other" index.
                 for idx, name in enumerate(semantic_class_names):
-                    self._name_to_id[name] = idx
-                    self._id_to_name[idx] = name
+                    self._name_to_id[name] = idx + 1
+                    self._id_to_name[idx + 1] = name
             self._instance_id_to_canonical_id = {
                 instance_id: self._name_to_id.get(name, 0)
                 for (instance_id, name) in self.instance_id_to_name.items()
             }
+            # Now, just log the instances for which semantic label could not be found.
+            ungrounded_instance_id_set = set()
+            for instance_id, sem_id in self._instance_id_to_canonical_id.items():
+                if sem_id == 0:
+                    ungrounded_instance_id_set.add(instance_id)
+            if len(ungrounded_instance_id_set) > 0:
+                logging.info(f"Ungrounded instance IDs: {str(ungrounded_instance_id_set)}")
             self.map_to_class_id = np.vectorize(
                 lambda x: self._instance_id_to_canonical_id.get(x, 0)
             )
@@ -323,7 +332,9 @@ class HabitatLocationDataset(Dataset):
             )
 
         # Now combine everything in one array.
-        self.coordinates = torch.from_numpy(np.concatenate(self.coordinates, axis=0)).float()
+        self.coordinates = torch.from_numpy(
+            np.concatenate(self.coordinates, axis=0)
+        ).float()
         self.semantic_label = torch.from_numpy(
             np.concatenate(self.semantic_label, axis=0)
         ).long()
