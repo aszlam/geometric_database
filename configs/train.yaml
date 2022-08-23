@@ -3,15 +3,19 @@ defaults:
   - scene: hm3d_00706
   - override hydra/launcher: submitit_slurm
 
-project: grid_lf_high_width
+project: grid_lf_large
 device: cuda
 use_cache: True
 point_batch_size: 12544
 
 # Model specs
 model_type: hash
-num_grid_levels: 16
-level_dim: 8  # So total dimension 128
+num_grid_levels: 20
+level_dim: 8  # So total dimension 256
+per_level_scale: 2
+mlp_depth: 3
+mlp_width: 1024
+log2_hashmap_size: 20
 
 seed: 42
 epochs: 205
@@ -41,7 +45,7 @@ betas:
   - 0.9
   - 0.999
 
-save_directory: "lf_high_width/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "lf_large/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
 web_models:
   clip: "ViT-B/32"
@@ -67,8 +71,8 @@ hydra:
       num_web_segmented_images: 0,135
   
   launcher:
-    # timeout_min: 315
-    timeout_min: 20
+    timeout_min: 315
+    # timeout_min: 20
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1

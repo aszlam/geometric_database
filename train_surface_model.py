@@ -613,9 +613,13 @@ def main(cfg):
         labelling_model = GridCLIPModel(
             image_rep_size=parent_train_dataset.image_representation_size,
             text_rep_size=parent_train_dataset.text_representation_size,
+            mlp_depth=cfg.mlp_depth,
+            mlp_width=cfg.mlp_width,
+            log2_hashmap_size=cfg.log2_hashmap_size,
             segmentation_classes=1024,  # Quick patch
             num_levels=cfg.num_grid_levels,
             level_dim=cfg.level_dim,
+            per_level_scale=cfg.per_level_scale,
             max_coords=max_coords,
             min_coords=min_coords,
         )
