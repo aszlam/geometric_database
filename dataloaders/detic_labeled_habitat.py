@@ -215,7 +215,7 @@ class DeticDenseLabelledDataset(Dataset):
                     resized_image = self.resize(image).unsqueeze(0).cuda()
                     tfm_image = self.transform(unsqueezed_image)
                     outputs = self.evaluator.parallel_forward(
-                        tfm_image, self._all_lseg_classes + self._all_classes
+                        tfm_image, self._all_lseg_classes
                     )
                     image_feature = clip_model.encode_image(resized_image).squeeze(0)
                     image_feature = image_feature.cpu()
@@ -353,13 +353,13 @@ class DeticDenseLabelledDataset(Dataset):
     def _setup_lseg(self):
         self._lseg_classes = self._all_classes
         self._num_true_lseg_classes = len(self._lseg_classes)
-        self._all_lseg_classes = self._lseg_classes  # + ["Other"]
+        self._all_lseg_classes = self._all_classes  # + ["Other"]
 
         self._unfound_offset = 0
         # Figure out the class labels.
         self._lseg_class_labels = {
             classname: self.find_in_class(classname)
-            for classname in self._all_lseg_classes
+            for classname in self._all_classes
         }
         # We will try to classify all the classes, but will use LSeg labels for classes that
         # are not identified by Detic.
