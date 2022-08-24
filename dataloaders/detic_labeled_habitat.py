@@ -106,6 +106,7 @@ class DeticDenseLabelledDataset(Dataset):
         detic_threshold: float = 0.3,
         num_images_to_label: int = 300,
         subsample_prob: float = 0.2,
+        use_lseg: bool = True,
     ):
         dataset = habitat_view_dataset
 
@@ -135,6 +136,8 @@ class DeticDenseLabelledDataset(Dataset):
         images_to_label = self.get_best_sem_segmented_images(
             dataset, num_images_to_label
         )
+
+        self._use_lseg = use_lseg
         # First, setup detic with the combined classes.
         self._setup_detic_all_classes(habitat_view_data)
         self._setup_detic_dense_labels(
@@ -201,66 +204,74 @@ class DeticDenseLabelledDataset(Dataset):
 
         # First delete leftover Detic predictors
         del self._predictor
-        # Now, get to LSeg
-        self._setup_lseg()
-        for idx, data_dict in tqdm.tqdm(enumerate(dataloader), total=len(dataset)):
-            if idx not in images_to_label:
-                continue
-            rgb = einops.rearrange(data_dict["rgb"][..., :3], "b h w c -> b c h w")
-            xyz = data_dict["xyz_position"]
-            for image, coordinates in zip(rgb, xyz):
-                # Now figure out the LSeg lables.
-                with torch.no_grad():
-                    unsqueezed_image = image.unsqueeze(0).cuda()
-                    resized_image = self.resize(image).unsqueeze(0).cuda()
-                    tfm_image = self.transform(unsqueezed_image)
-                    outputs = self.evaluator.parallel_forward(
-                        tfm_image, self._all_lseg_classes
+
+        if self._use_lseg:
+            # Now, get to LSeg
+            self._setup_lseg()
+            for idx, data_dict in tqdm.tqdm(enumerate(dataloader), total=len(dataset)):
+                if idx not in images_to_label:
+                    continue
+                rgb = einops.rearrange(data_dict["rgb"][..., :3], "b h w c -> b c h w")
+                xyz = data_dict["xyz_position"]
+                for image, coordinates in zip(rgb, xyz):
+                    # Now figure out the LSeg lables.
+                    with torch.no_grad():
+                        unsqueezed_image = image.unsqueeze(0).cuda()
+                        resized_image = self.resize(image).unsqueeze(0).cuda()
+                        tfm_image = self.transform(unsqueezed_image)
+                        outputs = self.evaluator.parallel_forward(
+                            tfm_image, self._all_lseg_classes
+                        )
+                        image_feature = clip_model.encode_image(resized_image).squeeze(
+                            0
+                        )
+                        image_feature = image_feature.cpu()
+                        predicts = [torch.max(output, 1)[1].cpu() for output in outputs]
+                    predict = predicts[0]
+
+                    reshaped_coordinates = einops.rearrange(
+                        coordinates, "c h w -> h w c"
                     )
-                    image_feature = clip_model.encode_image(resized_image).squeeze(0)
-                    image_feature = image_feature.cpu()
-                    predicts = [torch.max(output, 1)[1].cpu() for output in outputs]
-                predict = predicts[0]
+                    reshaped_rgb = einops.rearrange(image, "c h w -> h w c")
 
-                reshaped_coordinates = einops.rearrange(coordinates, "c h w -> h w c")
-                reshaped_rgb = einops.rearrange(image, "c h w -> h w c")
+                    for label in range(self._num_true_lseg_classes):
+                        pred_mask = predict.squeeze(0) == label
+                        total_points = len(reshaped_coordinates[pred_mask])
+                        if total_points:
+                            class_text_id = self._lseg_class_labels[
+                                self._all_lseg_classes[label]
+                            ]
+                            self._label_xyz.append(reshaped_coordinates[pred_mask])
+                            self._label_rgb.append(reshaped_rgb[pred_mask])
+                            # Ideally, this should give all classes their true class label.
+                            self._text_ids.append(
+                                torch.ones(total_points) * class_text_id
+                            )
+                            # Uniform label confidence of LSEG_LABEL_WEIGHT
+                            self._label_weight.append(
+                                torch.ones(total_points) * self.LSEG_LABEL_WEIGHT
+                            )
+                            self._image_features.append(
+                                einops.repeat(image_feature, "d -> b d", b=total_points)
+                            )
+                            self._label_idx.append(torch.ones(total_points) * label_idx)
+                            self._distance.append(
+                                torch.ones(total_points) * self.LSEG_IMAGE_DISTANCE
+                            )
+                    # Since they all get the same image, here label idx is increased once
+                    # at the very end.
+                    label_idx += 1
 
-                for label in range(self._num_true_lseg_classes):
-                    pred_mask = predict.squeeze(0) == label
-                    total_points = len(reshaped_coordinates[pred_mask])
-                    if total_points:
-                        class_text_id = self._lseg_class_labels[
-                            self._all_lseg_classes[label]
-                        ]
-                        self._label_xyz.append(reshaped_coordinates[pred_mask])
-                        self._label_rgb.append(reshaped_rgb[pred_mask])
-                        # Ideally, this should give all classes their true class label.
-                        self._text_ids.append(torch.ones(total_points) * class_text_id)
-                        # Uniform label confidence of LSEG_LABEL_WEIGHT
-                        self._label_weight.append(
-                            torch.ones(total_points) * self.LSEG_LABEL_WEIGHT
-                        )
-                        self._image_features.append(
-                            einops.repeat(image_feature, "d -> b d", b=total_points)
-                        )
-                        self._label_idx.append(torch.ones(total_points) * label_idx)
-                        self._distance.append(
-                            torch.ones(total_points) * self.LSEG_IMAGE_DISTANCE
-                        )
-                # Since they all get the same image, here label idx is increased once
-                # at the very end.
-                label_idx += 1
-
-        # Now, delete the module and the evaluator
-        del self.evaluator
-        del self.module
-        del self.transform
+            # Now, delete the module and the evaluator
+            del self.evaluator
+            del self.module
+            del self.transform
 
         # Now, get all the sentence encoding for all the labels.
         text_strings = [
             x.replace("-", " ").replace("_", " ") for x in self._all_classes
         ]
-        text_strings += self._lseg_classes
+        text_strings += self._all_classes
         with torch.no_grad():
             all_embedded_text = sentence_model.encode(text_strings)
             all_embedded_text = torch.from_numpy(all_embedded_text).float()
@@ -358,8 +369,7 @@ class DeticDenseLabelledDataset(Dataset):
         self._unfound_offset = 0
         # Figure out the class labels.
         self._lseg_class_labels = {
-            classname: self.find_in_class(classname)
-            for classname in self._all_classes
+            classname: self.find_in_class(classname) for classname in self._all_classes
         }
         # We will try to classify all the classes, but will use LSeg labels for classes that
         # are not identified by Detic.

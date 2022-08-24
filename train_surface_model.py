@@ -413,6 +413,7 @@ def get_habitat_dataset(
     num_sem_segmented_images=NUM_SEM_SEGMENTED_IMAGES,
     num_web_segmented_images=NUM_WEB_SEGMENTED_IMAGES,
     gt_semantic_weight: float = GT_SEMANTIC_WEIGHT,
+    use_lseg: bool = True,
 ):
     gt_segmentation_baseline = gt_segmentation_baseline or (
         num_web_segmented_images == 0
@@ -429,13 +430,16 @@ def get_habitat_dataset(
         dataset,
         lengths=[train_split_size, len(dataset) - train_split_size],
     )
+    lseg_str = "lseg" if use_lseg else "no_lseg"
     if use_cache and not gt_segmentation_baseline:
-        cache_fp = f".cache/lseg_labeled_dataset_{base_scene}_{grid_size}_{image_size}_{num_web_segmented_images}.pt"
+        cache_fp = f".cache/{lseg_str}_labeled_dataset_{base_scene}_{grid_size}_{image_size}_{num_web_segmented_images}.pt"
         if os.path.exists(cache_fp):
             location_train_dataset_1 = torch.load(cache_fp)
         else:
             location_train_dataset_1 = DeticDenseLabelledDataset(
-                view_train_dataset, num_images_to_label=num_web_segmented_images
+                view_train_dataset,
+                num_images_to_label=num_web_segmented_images,
+                use_lseg=use_lseg,
             )
             torch.save(location_train_dataset_1, cache_fp)
     # Now we will have to create more dataloaders for the CLIP dataset.
@@ -554,6 +558,7 @@ def main(cfg):
         num_sem_segmented_images=cfg.num_sem_segmented_images,
         num_web_segmented_images=cfg.num_web_segmented_images,
         gt_semantic_weight=cfg.gt_semantic_weight,
+        use_lseg=cfg.use_lseg,
     )
     if cfg.cache_only_run:
         # Caching is done, so we can exit now.

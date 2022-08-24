@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - scene: hm3d_00706
+  - scene: hm3d_00263
   - override hydra/launcher: submitit_slurm
 
 project: grid_lf_large_dbg
@@ -18,7 +18,7 @@ mlp_width: 1024
 log2_hashmap_size: 20
 
 seed: 42
-epochs: 205
+epochs: 500
 exp_decay_coeff: 0.5
 image_to_label_loss_ratio: 1.0
 label_to_image_loss_ratio: 0.03
@@ -31,12 +31,13 @@ num_workers: 10
 num_inst_segmented_images: 5
 num_sem_segmented_images: 96
 num_web_segmented_images: 135
+use_lseg: true
 gt_segmentation_baseline: false
 gt_semantic_weight: 34.0
 deterministic_id: true
 
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
-cache_only_run: false
+cache_only_run: true
 
 # Learning rate data
 lr: 1e-4
@@ -67,12 +68,12 @@ hydra:
       # scene: hm3d_00263,hm3d_00179
       # num_sem_segmented_images: 0
       # num_sem_segmented_images: 0,6,24,96
-      num_sem_segmented_images: 0,96
-      num_web_segmented_images: 0,135
+      # num_sem_segmented_images: 0,96
+      # num_web_segmented_images: 0,135
   
   launcher:
-    timeout_min: 315
-    # timeout_min: 20
+    # timeout_min: 315
+    timeout_min: 20
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1
