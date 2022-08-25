@@ -3,7 +3,7 @@ defaults:
   - scene: hm3d_00263
   - override hydra/launcher: submitit_slurm
 
-project: grid_lf_no_lseg
+project: grid_lf_no_sn_labels
 device: cuda
 use_cache: True
 point_batch_size: 12544
@@ -18,7 +18,7 @@ mlp_width: 1024
 log2_hashmap_size: 20
 
 seed: 42
-epochs: 500
+epochs: 200
 exp_decay_coeff: 0.5
 image_to_label_loss_ratio: 1.0
 label_to_image_loss_ratio: 0.03
@@ -31,10 +31,10 @@ num_workers: 10
 num_inst_segmented_images: 5
 num_sem_segmented_images: 96
 num_web_segmented_images: 135
-use_lseg: false
+use_lseg: true
 gt_segmentation_baseline: false
-use_extra_classes: true
-eval_only_on_seen_inst: false
+use_extra_classes: false
+eval_only_on_seen_inst: true
 gt_semantic_weight: 34.0
 deterministic_id: true
 
@@ -48,7 +48,7 @@ betas:
   - 0.9
   - 0.999
 
-save_directory: "lf_large_no_lseg/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "lf_large_no_sn_labels/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
 web_models:
   clip: "ViT-B/32"
@@ -72,7 +72,7 @@ hydra:
   
   launcher:
     timeout_min: 315
-    # timeout_min: 20
+    # timeout_min: 60
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1

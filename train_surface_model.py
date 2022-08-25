@@ -471,9 +471,8 @@ def get_habitat_dataset(
     clip_train_dataset._semantic_weight = torch.tensor(gt_semantic_weight)
 
     if use_cache:
-        cache_fp = (
-            f".cache/habitat_gt_dataset_test_{base_scene}_{grid_size}_{image_size}.pt"
-        )
+        only_seen_str = "_on_seen" if eval_only_on_seen_inst else ""
+        cache_fp = f".cache/habitat_gt_dataset_test{only_seen_str}_{base_scene}_{grid_size}_{image_size}.pt"
         if os.path.exists(cache_fp):
             clip_test_dataset = torch.load(cache_fp)
         else:
