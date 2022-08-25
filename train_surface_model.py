@@ -414,6 +414,8 @@ def get_habitat_dataset(
     num_web_segmented_images=NUM_WEB_SEGMENTED_IMAGES,
     gt_semantic_weight: float = GT_SEMANTIC_WEIGHT,
     use_lseg: bool = True,
+    use_extra_classes: bool = True,
+    eval_only_on_seen_inst: bool = False,
 ):
     gt_segmentation_baseline = gt_segmentation_baseline or (
         num_web_segmented_images == 0
@@ -431,8 +433,9 @@ def get_habitat_dataset(
         lengths=[train_split_size, len(dataset) - train_split_size],
     )
     lseg_str = "lseg" if use_lseg else "no_lseg"
+    extra_classes_str = "" if use_extra_classes else "_no_sn_200_"
     if use_cache and not gt_segmentation_baseline:
-        cache_fp = f".cache/{lseg_str}_labeled_dataset_{base_scene}_{grid_size}_{image_size}_{num_web_segmented_images}.pt"
+        cache_fp = f".cache/{lseg_str}{extra_classes_str}_labeled_dataset_{base_scene}_{grid_size}_{image_size}_{num_web_segmented_images}.pt"
         if os.path.exists(cache_fp):
             location_train_dataset_1 = torch.load(cache_fp)
         else:
@@ -440,6 +443,7 @@ def get_habitat_dataset(
                 view_train_dataset,
                 num_images_to_label=num_web_segmented_images,
                 use_lseg=use_lseg,
+                use_extra_classes=use_extra_classes,
             )
             torch.save(location_train_dataset_1, cache_fp)
     # Now we will have to create more dataloaders for the CLIP dataset.
@@ -478,6 +482,8 @@ def get_habitat_dataset(
                 subsample_prob=point_subsample_prob,
                 selective_instance_segmentation=False,
                 selective_semantic_segmentation=False,
+                use_only_valid_instance_ids=eval_only_on_seen_inst,
+                valid_instance_ids=clip_train_dataset.loc_dataset.valid_instance_ids,
                 # Return segmentation for all images in test.
             )
             clip_test_dataset = ClipLabelledLocation(
@@ -559,6 +565,8 @@ def main(cfg):
         num_web_segmented_images=cfg.num_web_segmented_images,
         gt_semantic_weight=cfg.gt_semantic_weight,
         use_lseg=cfg.use_lseg,
+        use_extra_classes=cfg.use_extra_classes,
+        eval_only_on_seen_inst=cfg.eval_only_on_seen_inst,
     )
     if cfg.cache_only_run:
         # Caching is done, so we can exit now.

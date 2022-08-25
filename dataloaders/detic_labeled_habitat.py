@@ -107,6 +107,7 @@ class DeticDenseLabelledDataset(Dataset):
         num_images_to_label: int = 300,
         subsample_prob: float = 0.2,
         use_lseg: bool = True,
+        use_extra_classes: bool = True,
     ):
         dataset = habitat_view_dataset
 
@@ -138,6 +139,7 @@ class DeticDenseLabelledDataset(Dataset):
         )
 
         self._use_lseg = use_lseg
+        self._use_extra_classes = use_extra_classes
         # First, setup detic with the combined classes.
         self._setup_detic_all_classes(habitat_view_data)
         self._setup_detic_dense_labels(
@@ -333,9 +335,11 @@ class DeticDenseLabelledDataset(Dataset):
         predictor = DefaultPredictor(cfg)
         prebuilt_class_names = list(habitat_view_data._id_to_name.values())
         prebuilt_class_set = set(prebuilt_class_names)
-        filtered_new_classes = [
-            x for x in CLASS_LABELS_200 if x not in prebuilt_class_set
-        ]
+        filtered_new_classes = (
+            [x for x in CLASS_LABELS_200 if x not in prebuilt_class_set]
+            if self._use_extra_classes
+            else []
+        )
         self._all_classes = ["Other"] + prebuilt_class_names + filtered_new_classes
         self._all_classes = [
             x.replace("-", " ").replace("_", " ").lower() for x in self._all_classes

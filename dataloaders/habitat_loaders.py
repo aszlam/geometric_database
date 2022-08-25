@@ -108,7 +108,9 @@ class HabitatViewDataset(Dataset):
                 if sem_id == 0:
                     ungrounded_instance_id_set.add(instance_id)
             if len(ungrounded_instance_id_set) > 0:
-                logging.info(f"Ungrounded instance IDs: {str(ungrounded_instance_id_set)}")
+                logging.info(
+                    f"Ungrounded instance IDs: {str(ungrounded_instance_id_set)}"
+                )
             self.map_to_class_id = np.vectorize(
                 lambda x: self._instance_id_to_canonical_id.get(x, 0)
             )
@@ -230,6 +232,8 @@ class HabitatLocationDataset(Dataset):
         num_inst_segmented_images: int = 5,
         num_sem_segmented_images: int = 100,
         return_nonsegmented_images: bool = True,
+        use_only_valid_instance_ids: bool = False,
+        valid_instance_ids: Optional[Iterable[int]] = None,
     ):
         habitat_view_data = (
             habitat_view_ds.dataset
@@ -252,6 +256,19 @@ class HabitatLocationDataset(Dataset):
             )
         else:
             self._sem_segmented_images = range(dataset_len)
+
+        if use_only_valid_instance_ids:
+            assert (
+                valid_instance_ids is not None
+            ), "Valid instance IDs must be assigned."
+            self._valid_instance_ids = set(valid_instance_ids)
+            logging.info(f"Set of valid instance ids: {str(self._valid_instance_ids)}")
+            self.map_to_valid_instance_id = np.vectorize(
+                lambda x: x if x in self._valid_instance_ids else -1
+            )
+        else:
+            # Identity function.
+            self.map_to_valid_instance_id = lambda x: x
 
         self.subsample_prob = subsample_prob
         image_extractor = habitat_view_data.image_extractor
@@ -315,11 +332,12 @@ class HabitatLocationDataset(Dataset):
             )
             # Only selectively give instance segmentation.
             if idx in self._inst_segmented_images:
-                self.instance_label.append(
+                valid_instance_labels = self.map_to_valid_instance_id(
                     einops.rearrange(
                         data_dict["instance_segmentation"], "w h -> (w h)"
                     )[subsampled]
                 )
+                self.instance_label.append(valid_instance_labels)
             else:
                 # Fill it with -1s
                 self.instance_label.append(np.ones_like(self.semantic_label[-1]) * -1)
@@ -350,6 +368,12 @@ class HabitatLocationDataset(Dataset):
         # Now, figure out the maximum and minimum coordinates.
         self.max_coords, _ = torch.max(self.coordinates, dim=0)
         self.min_coords, _ = torch.min(self.coordinates, dim=0)
+
+        del self.map_to_valid_instance_id
+
+    @property
+    def valid_instance_ids(self) -> List[int]:
+        return torch.unique(self.instance_label).cpu().numpy().tolist()
 
     def _get_semantic_labels_from_image(self, current_image_data_dict, subsampled):
         return einops.rearrange(
