@@ -1,11 +1,12 @@
 defaults:
   - _self_
-  - scene: hm3d_00263
+  - scene: hm3d_00217
   - override hydra/launcher: submitit_slurm
 
-project: grid_lf_no_sn_labels
+project: grid_lf_test_2
+deterministic_id: true
 device: cuda
-use_cache: True
+use_cache: true
 point_batch_size: 12544
 
 # Model specs
@@ -31,12 +32,14 @@ num_workers: 10
 num_inst_segmented_images: 5
 num_sem_segmented_images: 96
 num_web_segmented_images: 135
-use_lseg: true
 gt_segmentation_baseline: false
-use_extra_classes: false
+use_lseg: true
+use_extra_classes: true
+use_gt_classes_in_detic: true
 eval_only_on_seen_inst: true
 gt_semantic_weight: 34.0
-deterministic_id: true
+exclude_diffuse_classes_in_test: true
+semantic_class_remapping_in_test: true
 
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
 cache_only_run: false
@@ -48,7 +51,7 @@ betas:
   - 0.9
   - 0.999
 
-save_directory: "lf_large_no_sn_labels/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "lf_large_test_2/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
 web_models:
   clip: "ViT-B/32"
@@ -66,7 +69,7 @@ hydra:
     dir: multirun/${scene.base}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}
   sweeper:
     params:
-      scene: hm3d_00250,hm3d_00263,hm3d_00179,hm3d_00217,hm3d_00582,hm3d_00706
+      # scene: hm3d_00250,hm3d_00263,hm3d_00179,hm3d_00217,hm3d_00582,hm3d_00706
       num_sem_segmented_images: 0,96
       num_web_segmented_images: 0,135
   

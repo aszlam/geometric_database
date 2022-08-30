@@ -9,7 +9,6 @@ from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
 from dataloaders.habitat_loaders import HabitatViewDataset
 from dataloaders.scannet_200_classes import CLASS_LABELS_200
-from sentence_transformers import SentenceTransformer
 
 # Some basic setup:
 # Setup detectron2 logger
@@ -108,6 +107,7 @@ class DeticDenseLabelledDataset(Dataset):
         subsample_prob: float = 0.2,
         use_lseg: bool = True,
         use_extra_classes: bool = True,
+        use_gt_classes: bool = True,
     ):
         dataset = habitat_view_dataset
 
@@ -140,6 +140,7 @@ class DeticDenseLabelledDataset(Dataset):
 
         self._use_lseg = use_lseg
         self._use_extra_classes = use_extra_classes
+        self._use_gt_classes = use_gt_classes
         # First, setup detic with the combined classes.
         self._setup_detic_all_classes(habitat_view_data)
         self._setup_detic_dense_labels(
@@ -271,7 +272,7 @@ class DeticDenseLabelledDataset(Dataset):
 
         # Now, get all the sentence encoding for all the labels.
         text_strings = [
-            x.replace("-", " ").replace("_", " ") for x in self._all_classes
+            DeticDenseLabelledDataset.process_text(x) for x in self._all_classes
         ]
         text_strings += self._all_classes
         with torch.no_grad():
@@ -330,19 +331,28 @@ class DeticDenseLabelledDataset(Dataset):
     def __len__(self):
         return len(self._label_xyz)
 
+    @staticmethod
+    def process_text(x: str) -> str:
+        return x.replace("-", " ").replace("_", " ").lstrip().rstrip().lower()
+
     def _setup_detic_all_classes(self, habitat_view_data: HabitatViewDataset):
         # Unifying all the class labels.
         predictor = DefaultPredictor(cfg)
-        prebuilt_class_names = list(habitat_view_data._id_to_name.values())
-        prebuilt_class_set = set(prebuilt_class_names)
+        prebuilt_class_names = [
+            DeticDenseLabelledDataset.process_text(x)
+            for x in habitat_view_data._id_to_name.values()
+        ]
+        prebuilt_class_set = (
+            set(prebuilt_class_names) if self._use_gt_classes else set()
+        )
         filtered_new_classes = (
             [x for x in CLASS_LABELS_200 if x not in prebuilt_class_set]
             if self._use_extra_classes
             else []
         )
-        self._all_classes = ["Other"] + prebuilt_class_names + filtered_new_classes
+        self._all_classes = prebuilt_class_names + filtered_new_classes
         self._all_classes = [
-            x.replace("-", " ").replace("_", " ").lower() for x in self._all_classes
+            DeticDenseLabelledDataset.process_text(x) for x in self._all_classes
         ]
         new_metadata = MetadataCatalog.get("__unused")
         new_metadata.thing_classes = self._all_classes

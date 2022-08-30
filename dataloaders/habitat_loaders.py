@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Iterable, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import torch
 import json
@@ -90,29 +90,31 @@ class HabitatViewDataset(Dataset):
                 for obj in json.load(open(canonical_names_path)):
                     self._name_to_id[obj["name"]] = obj["id"]
                     self._id_to_name[obj["id"]] = obj["name"]
+                # Explicitly set 0 as Other, since habitat has no other class.
+                self._name_to_id["other"] = 0
+                self._id_to_name[0] = "other"
             else:
                 semantic_class_names = sorted(
                     self.image_extractor.get_semantic_class_names()
                 )
-                # Keep 0 as the "not found/Other" index.
                 for idx, name in enumerate(semantic_class_names):
-                    self._name_to_id[name] = idx + 1
-                    self._id_to_name[idx + 1] = name
+                    self._name_to_id[name] = idx
+                    self._id_to_name[idx] = name
             self._instance_id_to_canonical_id = {
-                instance_id: self._name_to_id.get(name, 0)
+                instance_id: self._name_to_id.get(name, -1)
                 for (instance_id, name) in self.instance_id_to_name.items()
             }
             # Now, just log the instances for which semantic label could not be found.
             ungrounded_instance_id_set = set()
             for instance_id, sem_id in self._instance_id_to_canonical_id.items():
-                if sem_id == 0:
+                if sem_id == -1:
                     ungrounded_instance_id_set.add(instance_id)
             if len(ungrounded_instance_id_set) > 0:
                 logging.info(
                     f"Ungrounded instance IDs: {str(ungrounded_instance_id_set)}"
                 )
             self.map_to_class_id = np.vectorize(
-                lambda x: self._instance_id_to_canonical_id.get(x, 0)
+                lambda x: self._instance_id_to_canonical_id.get(x, -1)
             )
 
         self._cache = {}
@@ -223,6 +225,8 @@ class HabitatLocationDataset(Dataset):
     selective_instance_segmentation: Only return instance segmentation for the top n images.
     """
 
+    DIFFUSE_CLASSES = ("wall", "floor", "ceiling")
+
     def __init__(
         self,
         habitat_view_ds: HabitatViewDataset,
@@ -234,6 +238,8 @@ class HabitatLocationDataset(Dataset):
         return_nonsegmented_images: bool = True,
         use_only_valid_instance_ids: bool = False,
         valid_instance_ids: Optional[Iterable[int]] = None,
+        exclude_diffuse_classes: bool = False,
+        class_remapping: Optional[Dict[str, str]] = None,
     ):
         habitat_view_data = (
             habitat_view_ds.dataset
@@ -282,6 +288,44 @@ class HabitatLocationDataset(Dataset):
         self.rgb_data = []
         self.distance_data = []
         self.indices = []
+
+        # Fix the instance id to name first
+        if class_remapping:
+            self._old_instance_id_to_name = self.instance_id_to_name
+            self.instance_id_to_name = {
+                x: class_remapping.get(name, name)
+                for x, name in self._old_instance_id_to_name.items()
+            }
+            # Now, have to create an ID to name as well.
+            self._id_to_name = {}
+            self._name_to_id = {}
+            set_of_semantic_classes = list(set(self.instance_id_to_name.values()))
+            for id, name in enumerate(sorted(set_of_semantic_classes)):
+                self._id_to_name[id] = name
+                self._name_to_id[name] = id
+            # No guarantees for which classes are labelled "other", though.
+            self._old_sem_id_to_new_sem_id = {
+                old_sem_id: self._name_to_id[class_remapping.get(name, name)]
+                for old_sem_id, name in habitat_view_data._id_to_name.items()
+            }
+            self.map_to_right_class_id = np.vectorize(
+                lambda x: self._old_sem_id_to_new_sem_id.get(x, -1)
+            )
+            self._remap_classes = True
+
+        else:
+            self._remap_classes = False
+            self.map_to_right_class_id = lambda x: x
+            self._id_to_name = habitat_view_data._id_to_name
+
+        self._excluded_classes = set()
+        if exclude_diffuse_classes:
+            # Figure out the diffuse class semantic ids.
+            for id, name in self._id_to_name.items():
+                if name.lstrip().rstrip().lower() in self.DIFFUSE_CLASSES:
+                    self._excluded_classes.add(id)
+
+        print(self._excluded_classes)
 
         # Precompute the camera intrinsics from the view dataset.
         self._get_intrinsics(habitat_view_data)
@@ -370,15 +414,21 @@ class HabitatLocationDataset(Dataset):
         self.min_coords, _ = torch.min(self.coordinates, dim=0)
 
         del self.map_to_valid_instance_id
+        del self.map_to_right_class_id
 
     @property
     def valid_instance_ids(self) -> List[int]:
         return torch.unique(self.instance_label).cpu().numpy().tolist()
 
+    def _exclude_diffuse_classes(self, instance_id: int, class_id: int) -> int:
+        return -1 if (class_id in self._excluded_classes) else instance_id
+
     def _get_semantic_labels_from_image(self, current_image_data_dict, subsampled):
-        return einops.rearrange(
-            current_image_data_dict["semantic_segmentation"], "w h -> (w h)"
-        )[subsampled]
+        return self.map_to_right_class_id(
+            einops.rearrange(
+                current_image_data_dict["semantic_segmentation"], "w h -> (w h)"
+            )[subsampled]
+        )
 
     def __len__(self):
         return len(self.coordinates)
@@ -388,7 +438,9 @@ class HabitatLocationDataset(Dataset):
             "xyz": self.coordinates[idx],
             "rgb": self.rgb_data[idx],
             "label": self.semantic_label[idx],
-            "instance": self.instance_label[idx],
+            "instance": self._exclude_diffuse_classes(
+                self.instance_label[idx], self.semantic_label[idx]
+            ),
             "img_idx": self.indices[idx],
             "distance": self.distance_data[idx],
         }

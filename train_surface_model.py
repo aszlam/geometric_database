@@ -2,7 +2,7 @@ import glob
 import logging
 import os
 import random
-from typing import Dict
+from typing import Dict, Optional
 
 import hydra
 import numpy as np
@@ -65,6 +65,7 @@ GT_SEMANTIC_WEIGHT = 10
 
 MODEL_TYPE = "hash"  # MLP or hash
 CACHE = True
+TOP_K = 3
 
 # Set up the desired metrics.
 METRICS = {
@@ -183,16 +184,15 @@ def train(
             )
             # Now figure out semantic accuracy and loss.
             semseg_mask = torch.logical_and(
-                language_label_index != 0,
-                language_label_index <= classifier.total_label_classes,
+                language_label_index != -1,
+                language_label_index < classifier.total_label_classes,
             ).squeeze(-1)
             if not torch.any(semseg_mask):
                 classification_loss = 0
             else:
                 # Figure out the right classes.
                 masked_class_prob = class_probs[semseg_mask]
-                # Minus one since we are dropping the class "Other".
-                masked_labels = language_label_index[semseg_mask].squeeze(-1).long() - 1
+                masked_labels = language_label_index[semseg_mask].squeeze(-1).long()
                 classification_loss = F.cross_entropy(
                     torch.log(masked_class_prob),
                     masked_labels,
@@ -237,6 +237,7 @@ def train(
             metric.reset()
 
     wandb.log(to_log)
+    logging.info(to_log)
 
 
 def test(
@@ -332,15 +333,15 @@ def test(
             )
             # Now figure out semantic accuracy and loss.
             semseg_mask = torch.logical_and(
-                language_label_index != 0,
-                language_label_index <= classifier.total_label_classes,
+                language_label_index != -1,
+                language_label_index < classifier.total_label_classes,
             ).squeeze(-1)
             if not torch.any(semseg_mask):
                 classification_loss = torch.zeros_like(contrastive_loss_images)
             else:
                 # Figure out the right classes.
                 masked_class_prob = class_probs[semseg_mask]
-                masked_labels = language_label_index[semseg_mask].squeeze(-1).long() - 1
+                masked_labels = language_label_index[semseg_mask].squeeze(-1).long()
                 if metric_calculators.get("semantic"):
                     for _, calculators in metric_calculators["semantic"].items():
                         # Update the calculators.
@@ -415,7 +416,10 @@ def get_habitat_dataset(
     gt_semantic_weight: float = GT_SEMANTIC_WEIGHT,
     use_lseg: bool = True,
     use_extra_classes: bool = True,
+    use_gt_classes: bool = True,
     eval_only_on_seen_inst: bool = False,
+    exclude_diffuse_classes: bool = False,
+    class_remapping: Optional[Dict[str, str]] = None,
 ):
     gt_segmentation_baseline = gt_segmentation_baseline or (
         num_web_segmented_images == 0
@@ -433,9 +437,10 @@ def get_habitat_dataset(
         lengths=[train_split_size, len(dataset) - train_split_size],
     )
     lseg_str = "lseg" if use_lseg else "no_lseg"
-    extra_classes_str = "" if use_extra_classes else "_no_sn_200_"
+    extra_classes_str = "" if use_extra_classes else "_no_sn_200"
+    use_gt_classes_str = "" if use_gt_classes else "_no_gt_classes"
     if use_cache and not gt_segmentation_baseline:
-        cache_fp = f".cache/{lseg_str}{extra_classes_str}_labeled_dataset_{base_scene}_{grid_size}_{image_size}_{num_web_segmented_images}.pt"
+        cache_fp = f".cache/{lseg_str}{extra_classes_str}{use_gt_classes_str}_labeled_dataset_{base_scene}_{grid_size}_{image_size}_{num_web_segmented_images}.pt"
         if os.path.exists(cache_fp):
             location_train_dataset_1 = torch.load(cache_fp)
         else:
@@ -444,6 +449,7 @@ def get_habitat_dataset(
                 num_images_to_label=num_web_segmented_images,
                 use_lseg=use_lseg,
                 use_extra_classes=use_extra_classes,
+                use_gt_classes=use_gt_classes,
             )
             torch.save(location_train_dataset_1, cache_fp)
     # Now we will have to create more dataloaders for the CLIP dataset.
@@ -472,7 +478,9 @@ def get_habitat_dataset(
 
     if use_cache:
         only_seen_str = "_on_seen" if eval_only_on_seen_inst else ""
-        cache_fp = f".cache/habitat_gt_dataset_test{only_seen_str}_{base_scene}_{grid_size}_{image_size}.pt"
+        class_remapping_str = "_remapped_classes" if class_remapping else ""
+        exclude_diffuse_class_str = "_no_diffuse" if exclude_diffuse_classes else ""
+        cache_fp = f".cache/habitat_gt_dataset_test{only_seen_str}{exclude_diffuse_class_str}{class_remapping_str}_{base_scene}_{grid_size}_{image_size}.pt"
         if os.path.exists(cache_fp):
             clip_test_dataset = torch.load(cache_fp)
         else:
@@ -483,12 +491,16 @@ def get_habitat_dataset(
                 selective_semantic_segmentation=False,
                 use_only_valid_instance_ids=eval_only_on_seen_inst,
                 valid_instance_ids=clip_train_dataset.loc_dataset.valid_instance_ids,
+                exclude_diffuse_classes=exclude_diffuse_classes,
+                class_remapping=class_remapping,
                 # Return segmentation for all images in test.
             )
             clip_test_dataset = ClipLabelledLocation(
                 view_test_dataset,
                 location_test_dataset,
-                id_to_name=id_to_name,
+                id_to_name=id_to_name
+                if not class_remapping
+                else location_test_dataset._id_to_name,
                 semantic_weight=gt_semantic_weight,
             )
             torch.save(clip_test_dataset, cache_fp)
@@ -508,6 +520,7 @@ def get_habitat_dataset(
 
     return (
         list(dataset._id_to_name.values()),
+        list(clip_test_dataset.loc_dataset._id_to_name.values()),
         clip_train_dataset,
         clip_train_dataset_concat,
         clip_test_dataset,
@@ -546,8 +559,17 @@ def get_real_dataset():
 def main(cfg):
     seed_everything(cfg.seed)
     # Run basic sanity test on the dataloader.
+    # Now, figure out if we are relabelling during test, and if so, add that to the
+    # test loader
+    if cfg.semantic_class_remapping_in_test and hasattr(
+        cfg.scene, "semantic_class_remapping"
+    ):
+        class_remapping = cfg.scene.semantic_class_remapping
+    else:
+        class_remapping = None
     (
-        label_set,
+        train_label_set,
+        test_label_set,
         parent_train_dataset,
         clip_train_dataset,
         clip_test_dataset,
@@ -565,12 +587,11 @@ def main(cfg):
         gt_semantic_weight=cfg.gt_semantic_weight,
         use_lseg=cfg.use_lseg,
         use_extra_classes=cfg.use_extra_classes,
+        use_gt_classes=cfg.use_gt_classes_in_detic,
+        exclude_diffuse_classes=cfg.exclude_diffuse_classes_in_test,
         eval_only_on_seen_inst=cfg.eval_only_on_seen_inst,
+        class_remapping=class_remapping,
     )
-    if cfg.cache_only_run:
-        # Caching is done, so we can exit now.
-        logging.info("Cache only run, exiting.")
-        exit(0)
 
     # Setup our model with min and max coordinates.
     max_coords, _ = torch.stack(
@@ -593,31 +614,71 @@ def main(cfg):
     ).min(0)
     logging.info(f"Environment bounds: max {max_coords} min {min_coords}")
 
-    classifier = ClassificationExtractor(
-        clip_model_name=cfg.web_models.clip,
-        sentence_model_name=cfg.web_models.sentence,
-        class_names=label_set,
-        device=cfg.device,
+    print(train_label_set, test_label_set)
+    print(
+        clip_test_dataset.loc_dataset._id_to_name,
+        clip_test_dataset.loc_dataset._old_sem_id_to_new_sem_id,
     )
 
+    if cfg.cache_only_run:
+        # Caching is done, so we can exit now.
+        logging.info("Cache only run, exiting.")
+        exit(0)
+    train_classifier = ClassificationExtractor(
+        clip_model_name=cfg.web_models.clip,
+        sentence_model_name=cfg.web_models.sentence,
+        class_names=train_label_set,
+        device=cfg.device,
+    )
+    test_classifier = ClassificationExtractor(
+        clip_model_name=cfg.web_models.clip,
+        sentence_model_name=cfg.web_models.sentence,
+        class_names=test_label_set,
+        device=cfg.device,
+    )
+    print(train_classifier.class_names)
+    print(test_classifier.class_names)
+
     # Set up our metrics on this dataset.
-    all_metric_calculators = {}
+    train_metric_calculators = {}
+    test_metric_calculators = {}
 
     # Assume the classes go from 0 up to class labels.
-    class_count = {
-        "semantic": classifier.total_label_classes,
-        # "instance": clip_test_dataset.loc_dataset.instance_label.max().item(),
+    train_class_count = {
+        "semantic": train_classifier.total_label_classes,
+        "instance": 1024,
+    }
+    test_class_count = {
+        "semantic": test_classifier.total_label_classes,
         "instance": 1024,
     }
     average_style = ["micro", "macro", "weighted"]
-    for classes, counts in class_count.items():
-        all_metric_calculators[classes] = {}
+    for classes, counts in train_class_count.items():
+        train_metric_calculators[classes] = {}
         for metric_name, metric_cls in METRICS.items():
             for avg in average_style:
                 new_metric = metric_cls(num_classes=counts, average=avg).to(cfg.device)
-                all_metric_calculators[classes][
+                train_metric_calculators[classes][
                     f"{classes}_{metric_name}_{avg}"
                 ] = new_metric
+
+    for classes, counts in test_class_count.items():
+        test_metric_calculators[classes] = {}
+        for metric_name, metric_cls in METRICS.items():
+            for avg in average_style:
+                new_metric = metric_cls(num_classes=counts, average=avg).to(cfg.device)
+                test_metric_calculators[classes][
+                    f"{classes}_{metric_name}_{avg}"
+                ] = new_metric
+
+                if metric_name == "accuracy":
+                    # Add topk
+                    new_metric = metric_cls(
+                        num_classes=counts, average=avg, top_k=TOP_K
+                    ).to(cfg.device)
+                    test_metric_calculators[classes][
+                        f"{classes}_{metric_name}_{avg}_top{TOP_K}"
+                    ] = new_metric
 
     if cfg.model_type == "MLP":
         labelling_model = ImplicitCLIPModel()
@@ -770,14 +831,14 @@ def main(cfg):
             clip_train_loader,
             labelling_model,
             optim,
-            classifier,
+            train_classifier,
             cfg.device,
             exp_decay_coeff=cfg.exp_decay_coeff,
             image_to_label_loss_ratio=cfg.image_to_label_loss_ratio,
             label_to_image_loss_ratio=cfg.label_to_image_loss_ratio,
             instance_loss_scale=cfg.instance_loss_scale,
             disable_tqdm=disable_tqdm,
-            metric_calculators=all_metric_calculators,
+            metric_calculators=train_metric_calculators,
         )
         if epoch % EVAL_EVERY == 0:
             test(
@@ -785,7 +846,7 @@ def main(cfg):
                 labelling_model,
                 optim,
                 epoch,
-                classifier,
+                test_classifier,
                 cfg.device,
                 exp_decay_coeff=cfg.exp_decay_coeff,
                 image_to_label_loss_ratio=cfg.image_to_label_loss_ratio,
@@ -793,7 +854,7 @@ def main(cfg):
                 instance_loss_scale=cfg.instance_loss_scale,
                 save_directory=save_directory,
                 saving_dataparallel=dataparallel,
-                metric_calculators=all_metric_calculators,
+                metric_calculators=test_metric_calculators,
             )
         epoch += 1
 
