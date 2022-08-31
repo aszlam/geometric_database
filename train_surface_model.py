@@ -811,6 +811,7 @@ def main(cfg):
         ],
         config=OmegaConf.to_container(cfg, resolve=True),
         resume=resume,
+        settings=wandb.Settings(start_method="fork"),
     )
     # Set the extra parameters.
     wandb.config.human_labelled_points = len(parent_train_dataset)
