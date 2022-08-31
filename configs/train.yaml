@@ -2,6 +2,7 @@ defaults:
   - _self_
   - scene: hm3d_00217
   - override hydra/launcher: submitit_slurm
+  - override hydra/sweeper: nevergrad
 
 project: grid_lf_habitat_poc
 deterministic_id: true
@@ -68,11 +69,70 @@ hydra:
   sweep:
     dir: multirun/${scene.base}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}
   sweeper:
-    params:
-      # scene: hm3d_00250,hm3d_00263,hm3d_00179,hm3d_00217,hm3d_00582,hm3d_00706
-      scene: apt_0,apt_2
-      num_sem_segmented_images: 0,48
-      num_web_segmented_images: 0,135
+    # params:
+    #   # scene: hm3d_00250,hm3d_00263,hm3d_00179,hm3d_00217,hm3d_00582,hm3d_00706
+    #   scene: apt_0,apt_2
+    #   num_sem_segmented_images: 0,48
+    #   num_web_segmented_images: 0,135
+    # params:
+    #   scene: hm3d_00217
+    optim:
+      optimizer: OnePlusOne
+      budget: 120
+      num_workers: 10
+    parametrization:
+      num_grid_levels:
+        init: 16
+        lower: 12
+        upper: 20
+        integer: True
+      level_dim:
+        - 2
+        - 4
+        - 8
+      mlp_width:
+        init: 128
+        step: 2
+        lower: 32
+        upper: 2048
+        integer: True
+        log: True
+      mlp_depth:
+        init: 3
+        lower: 1
+        upper: 5
+        step: 1
+        integer: True
+      log2_hashmap_size:
+        init: 19
+        lower: 12
+        upper: 20
+        step: 1
+        integer: True
+      # state_prior.embd_pdrop:
+      #   init: 0.1
+      #   lower: 0.0
+      #   upper: 1.0
+      #   step: 0.1
+      # batch_size:
+      #   init: 64
+      #   lower: 32
+      #   upper: 256
+      #   integer: True
+      #   log: True
+      # action_ae.num_bins:
+      #   init: 64
+      #   lower: 32
+      #   upper: 256
+      #   step: 2
+      #   integer: True
+      #   log: True
+      # num_prior_epochs:
+      #   init: 50
+      #   lower: 30
+      #   upper: 400
+      #   integer: True
+      #   log: True
   
   launcher:
     timeout_min: 315
