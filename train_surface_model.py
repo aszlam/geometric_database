@@ -400,6 +400,10 @@ def test(
         to_save,
         f"outputs/implicit_models/{save_directory}/implicit_scene_label_model_latest.pt",
     )
+    return (
+        -to_log["test_avg/semantic_accuracy_micro"]
+        - to_log["test_avg/instance_accuracy_micro"]
+    )
 
 
 def get_habitat_dataset(
@@ -820,6 +824,7 @@ def main(cfg):
         disable_tqdm = True
     else:
         disable_tqdm = False
+    test_accuracy = 0
     while epoch <= cfg.epochs:
         train(
             clip_train_loader,
@@ -835,7 +840,7 @@ def main(cfg):
             metric_calculators=train_metric_calculators,
         )
         if epoch % EVAL_EVERY == 0:
-            test(
+            test_accuracy = test(
                 clip_test_loader,
                 labelling_model,
                 optim,
@@ -851,7 +856,7 @@ def main(cfg):
                 metric_calculators=test_metric_calculators,
             )
         epoch += 1
-
+    return test_accuracy
 
 if __name__ == "__main__":
     main()
