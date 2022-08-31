@@ -3,7 +3,7 @@ defaults:
   - scene: hm3d_00217
   - override hydra/launcher: submitit_slurm
 
-project: grid_lf_test_2
+project: grid_lf_habitat_poc
 deterministic_id: true
 device: cuda
 use_cache: true
@@ -11,12 +11,12 @@ point_batch_size: 12544
 
 # Model specs
 model_type: hash
-num_grid_levels: 20
+num_grid_levels: 16
 level_dim: 8  # So total dimension 256
 per_level_scale: 2
 mlp_depth: 3
 mlp_width: 1024
-log2_hashmap_size: 20
+log2_hashmap_size: 18
 
 seed: 42
 epochs: 200
@@ -30,7 +30,7 @@ num_workers: 10
 
 # Number of ground truth labeled images
 num_inst_segmented_images: 5
-num_sem_segmented_images: 96
+num_sem_segmented_images: 48
 num_web_segmented_images: 135
 gt_segmentation_baseline: false
 use_lseg: true
@@ -51,7 +51,7 @@ betas:
   - 0.9
   - 0.999
 
-save_directory: "lf_large_test_2/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "lf_habitat_poc/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
 web_models:
   clip: "ViT-B/32"
@@ -70,7 +70,8 @@ hydra:
   sweeper:
     params:
       # scene: hm3d_00250,hm3d_00263,hm3d_00179,hm3d_00217,hm3d_00582,hm3d_00706
-      num_sem_segmented_images: 0,96
+      scene: apt_0,apt_2
+      num_sem_segmented_images: 0,48
       num_web_segmented_images: 0,135
   
   launcher:

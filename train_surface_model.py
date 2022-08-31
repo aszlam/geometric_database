@@ -614,12 +614,6 @@ def main(cfg):
     ).min(0)
     logging.info(f"Environment bounds: max {max_coords} min {min_coords}")
 
-    print(train_label_set, test_label_set)
-    print(
-        clip_test_dataset.loc_dataset._id_to_name,
-        clip_test_dataset.loc_dataset._old_sem_id_to_new_sem_id,
-    )
-
     if cfg.cache_only_run:
         # Caching is done, so we can exit now.
         logging.info("Cache only run, exiting.")

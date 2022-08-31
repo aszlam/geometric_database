@@ -196,7 +196,10 @@ class DeticDenseLabelledDataset(Dataset):
                     total_points = len(reshaped_coordinates[pred_mask])
                     self._label_xyz.append(reshaped_coordinates[pred_mask])
                     self._label_rgb.append(reshaped_rgb[pred_mask])
-                    self._text_ids.append(torch.ones(total_points) * pred_class)
+                    self._text_ids.append(
+                        torch.ones(total_points)
+                        * (pred_class + self._class_label_offset)
+                    )
                     self._label_weight.append(torch.ones(total_points) * pred_score)
                     self._image_features.append(
                         einops.repeat(feature, "d -> b d", b=total_points)
@@ -248,7 +251,8 @@ class DeticDenseLabelledDataset(Dataset):
                             self._label_rgb.append(reshaped_rgb[pred_mask])
                             # Ideally, this should give all classes their true class label.
                             self._text_ids.append(
-                                torch.ones(total_points) * class_text_id
+                                torch.ones(total_points)
+                                * (class_text_id + self._class_label_offset)
                             )
                             # Uniform label confidence of LSEG_LABEL_WEIGHT
                             self._label_weight.append(
@@ -344,6 +348,10 @@ class DeticDenseLabelledDataset(Dataset):
         ]
         prebuilt_class_set = (
             set(prebuilt_class_names) if self._use_gt_classes else set()
+        )
+        # Where does
+        self._class_label_offset = len(set(prebuilt_class_names)) - len(
+            prebuilt_class_set
         )
         filtered_new_classes = (
             [x for x in CLASS_LABELS_200 if x not in prebuilt_class_set]
