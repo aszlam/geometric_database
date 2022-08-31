@@ -325,6 +325,12 @@ class HabitatLocationDataset(Dataset):
                 if name.lstrip().rstrip().lower() in self.DIFFUSE_CLASSES:
                     self._excluded_classes.add(id)
 
+            self.mask_excluded_class = np.vectorize(
+                lambda x: True if x in self._excluded_classes else False
+            )
+        else:
+            self.mask_excluded_class = lambda x: np.zeros_like(x).astype(bool)
+
         print(self._excluded_classes)
 
         # Precompute the camera intrinsics from the view dataset.
@@ -381,10 +387,14 @@ class HabitatLocationDataset(Dataset):
                         data_dict["instance_segmentation"], "w h -> (w h)"
                     )[subsampled]
                 )
-                self.instance_label.append(valid_instance_labels)
             else:
                 # Fill it with -1s
-                self.instance_label.append(np.ones_like(self.semantic_label[-1]) * -1)
+                valid_instance_labels = np.ones_like(self.semantic_label[-1]) * -1
+            # Also replace the diffuse classes, if necessary
+            diffuse_class_mask = self.mask_excluded_class(self.semantic_label[-1])
+            valid_instance_labels[diffuse_class_mask] = -1
+            self.instance_label.append(valid_instance_labels)
+
             self.rgb_data.append(
                 einops.rearrange(all_rgb, "w h d -> (w h) d")[subsampled]
             )
@@ -415,6 +425,7 @@ class HabitatLocationDataset(Dataset):
 
         del self.map_to_valid_instance_id
         del self.map_to_right_class_id
+        del self.mask_excluded_class
 
     @property
     def valid_instance_ids(self) -> List[int]:
@@ -438,9 +449,7 @@ class HabitatLocationDataset(Dataset):
             "xyz": self.coordinates[idx],
             "rgb": self.rgb_data[idx],
             "label": self.semantic_label[idx],
-            "instance": self._exclude_diffuse_classes(
-                self.instance_label[idx], self.semantic_label[idx]
-            ),
+            "instance": self.instance_label[idx],
             "img_idx": self.indices[idx],
             "distance": self.distance_data[idx],
         }

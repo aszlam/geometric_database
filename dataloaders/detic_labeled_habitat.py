@@ -198,7 +198,7 @@ class DeticDenseLabelledDataset(Dataset):
                     self._label_rgb.append(reshaped_rgb[pred_mask])
                     self._text_ids.append(
                         torch.ones(total_points)
-                        * (pred_class + self._class_label_offset)
+                        * self._new_class_to_old_class_mapping[pred_class]
                     )
                     self._label_weight.append(torch.ones(total_points) * pred_score)
                     self._image_features.append(
@@ -240,19 +240,16 @@ class DeticDenseLabelledDataset(Dataset):
                     )
                     reshaped_rgb = einops.rearrange(image, "c h w -> h w c")
 
-                    for label in range(self._num_true_lseg_classes):
+                    for label in range(len(self._all_classes)):
                         pred_mask = predict.squeeze(0) == label
                         total_points = len(reshaped_coordinates[pred_mask])
                         if total_points:
-                            class_text_id = self._lseg_class_labels[
-                                self._all_lseg_classes[label]
-                            ]
                             self._label_xyz.append(reshaped_coordinates[pred_mask])
                             self._label_rgb.append(reshaped_rgb[pred_mask])
                             # Ideally, this should give all classes their true class label.
                             self._text_ids.append(
                                 torch.ones(total_points)
-                                * (class_text_id + self._class_label_offset)
+                                * self._new_class_to_old_class_mapping[label]
                             )
                             # Uniform label confidence of LSEG_LABEL_WEIGHT
                             self._label_weight.append(
@@ -349,16 +346,31 @@ class DeticDenseLabelledDataset(Dataset):
         prebuilt_class_set = (
             set(prebuilt_class_names) if self._use_gt_classes else set()
         )
-        # Where does
-        self._class_label_offset = len(set(prebuilt_class_names)) - len(
-            prebuilt_class_set
-        )
         filtered_new_classes = (
             [x for x in CLASS_LABELS_200 if x not in prebuilt_class_set]
             if self._use_extra_classes
             else []
         )
+
         self._all_classes = prebuilt_class_names + filtered_new_classes
+
+        if self._use_gt_classes:
+            self._new_class_to_old_class_mapping = {
+                x: x for x in range(len(self._all_classes))
+            }
+        else:
+            # We are not using all classes, so we should map which new/extra class maps
+            # to which old class.
+            for class_idx, class_name in enumerate(self._all_classes):
+                if class_name in prebuilt_class_set:
+                    old_idx = prebuilt_class_names.index(class_name)
+                else:
+                    old_idx = len(prebuilt_class_names) + filtered_new_classes.index(
+                        class_name
+                    )
+                self._new_class_to_old_class_mapping[class_idx] = old_idx
+
+        print(self._new_class_to_old_class_mapping)
         self._all_classes = [
             DeticDenseLabelledDataset.process_text(x) for x in self._all_classes
         ]
@@ -388,11 +400,11 @@ class DeticDenseLabelledDataset(Dataset):
         self._num_true_lseg_classes = len(self._lseg_classes)
         self._all_lseg_classes = self._all_classes  # + ["Other"]
 
-        self._unfound_offset = 0
-        # Figure out the class labels.
-        self._lseg_class_labels = {
-            classname: self.find_in_class(classname) for classname in self._all_classes
-        }
+        # self._unfound_offset = 0
+        # # Figure out the class labels.
+        # self._lseg_class_labels = {
+        #     classname: self.find_in_class(classname) for classname in self._all_classes
+        # }
         # We will try to classify all the classes, but will use LSeg labels for classes that
         # are not identified by Detic.
 
