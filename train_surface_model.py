@@ -731,7 +731,10 @@ def main(cfg):
 
     save_directory = cfg.save_directory.format(cfg.scene.base)
     loaded = False
-    if os.path.exists("outputs/implicit_models/{}/".format(save_directory)):
+    if (
+        os.path.exists("outputs/implicit_models/{}/".format(save_directory))
+        and cfg.resume_if_possible
+    ):
         # First find out which epoch is the latest one.
         all_files = glob.glob(
             "outputs/implicit_models/{}/implicit_scene_label_model_*.pt".format(
@@ -858,6 +861,7 @@ def main(cfg):
             )
         epoch += 1
     return test_accuracy
+
 
 if __name__ == "__main__":
     main()

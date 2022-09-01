@@ -4,7 +4,7 @@ defaults:
   - override hydra/launcher: submitit_slurm
   - override hydra/sweeper: nevergrad
 
-project: grid_lf_hparam_search
+project: grid_lf_hparam_search_3
 deterministic_id: false
 device: cuda
 use_cache: true
@@ -12,15 +12,16 @@ point_batch_size: 12544
 
 # Model specs
 model_type: hash
-num_grid_levels: 16
+num_grid_levels: 18
 level_dim: 8  # So total dimension 256
 per_level_scale: 2
-mlp_depth: 3
-mlp_width: 1024
-log2_hashmap_size: 18
+mlp_depth: 1
+mlp_width: 600
+log2_hashmap_size: 20
+resume_if_possible: false
 
 seed: 42
-epochs: 100
+epochs: 50
 exp_decay_coeff: 0.5
 image_to_label_loss_ratio: 1.0
 label_to_image_loss_ratio: 0.1
@@ -40,7 +41,7 @@ use_gt_classes_in_detic: true
 eval_only_on_seen_inst: true
 gt_semantic_weight: 10.0
 exclude_diffuse_classes_in_test: true
-semantic_class_remapping_in_test: true
+semantic_class_remapping_in_test: false
 
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
 cache_only_run: false
@@ -81,45 +82,60 @@ hydra:
       budget: 120
       num_workers: 10
     parametrization:
-      num_grid_levels:
-        init: 16
-        lower: 12
-        upper: 20
-        integer: True
-      level_dim:
-        - 2
-        - 4
-        - 8
-      mlp_width:
-        init: 128
-        step: 2
-        lower: 32
-        upper: 2048
-        integer: True
-        log: True
-      mlp_depth:
-        init: 3
-        lower: 1
-        upper: 5
-        step: 1
-        integer: True
-      log2_hashmap_size:
-        init: 19
-        lower: 12
-        upper: 20
-        step: 1
-        integer: True
+      # num_grid_levels:
+      #   init: 18
+      #   lower: 14
+      #   upper: 20
+      #   integer: True
+      # level_dim:
+      #   - 2
+      #   - 4
+      #   - 8
+      # mlp_width:
+      #   init: 385
+      #   step: 2
+      #   lower: 32
+      #   upper: 2048
+      #   integer: True
+      #   log: True
+      # mlp_depth:
+      #   init: 2
+      #   lower: 1
+      #   upper: 5
+      #   step: 1
+      #   integer: True
+      # log2_hashmap_size:
+      #   init: 19
+      #   lower: 12
+      #   upper: 20
+      #   step: 1
+      #   integer: True
       # state_prior.embd_pdrop:
       #   init: 0.1
       #   lower: 0.0
       #   upper: 1.0
       #   step: 0.1
-      # batch_size:
-      #   init: 64
-      #   lower: 32
-      #   upper: 256
-      #   integer: True
-      #   log: True
+      batch_size:
+        init: 12544
+        lower: 128
+        upper: 12544
+        integer: True
+        log: True
+      lr:
+        init: 1e-4
+        lower: 1e-6
+        upper: 1e-1
+        log: true
+      weight_decay:
+        init: 0.01
+        lower: 0.0
+        upper: 1.0
+      epochs:
+        init: 100
+        lower: 10
+        upper: 200
+        step: 10
+        integer: True
       # action_ae.num_bins:
       #   init: 64
       #   lower: 32
@@ -135,7 +151,7 @@ hydra:
       #   log: True
   
   launcher:
-    timeout_min: 315
+    timeout_min: 320
     # timeout_min: 60
     cpus_per_task: 10
     gpus_per_node: 1
