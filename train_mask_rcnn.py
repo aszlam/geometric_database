@@ -193,9 +193,9 @@ def main(cfg):
 
     # our dataset has two classes only - background and person
     # use our dataset and defined transformations
-    base_filename = cfg.scene.base
+    base_filename = cfg.scene.filepath
     dataset = HabitatViewDataset(
-        habitat_scenes=[base_filename],
+        habitat_scenes=base_filename,
         pose_extractor_grid_size=cfg.scene.grid_size,
         height_levels=0,
         canonical_object_ids=True,
