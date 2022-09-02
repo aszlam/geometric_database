@@ -9,7 +9,6 @@ from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
 from dataloaders.habitat_loaders import HabitatViewDataset
 from dataloaders.scannet_200_classes import CLASS_LABELS_200
-from sentence_transformers import SentenceTransformer
 
 # Some basic setup:
 # Setup detectron2 logger
@@ -108,6 +107,7 @@ class DeticDenseLabelledDataset(Dataset):
         subsample_prob: float = 0.2,
         use_lseg: bool = True,
         use_extra_classes: bool = True,
+        use_gt_classes: bool = True,
     ):
         dataset = habitat_view_dataset
 
@@ -140,6 +140,7 @@ class DeticDenseLabelledDataset(Dataset):
 
         self._use_lseg = use_lseg
         self._use_extra_classes = use_extra_classes
+        self._use_gt_classes = use_gt_classes
         # First, setup detic with the combined classes.
         self._setup_detic_all_classes(habitat_view_data)
         self._setup_detic_dense_labels(
@@ -195,7 +196,10 @@ class DeticDenseLabelledDataset(Dataset):
                     total_points = len(reshaped_coordinates[pred_mask])
                     self._label_xyz.append(reshaped_coordinates[pred_mask])
                     self._label_rgb.append(reshaped_rgb[pred_mask])
-                    self._text_ids.append(torch.ones(total_points) * pred_class)
+                    self._text_ids.append(
+                        torch.ones(total_points)
+                        * self._new_class_to_old_class_mapping[pred_class.item()]
+                    )
                     self._label_weight.append(torch.ones(total_points) * pred_score)
                     self._image_features.append(
                         einops.repeat(feature, "d -> b d", b=total_points)
@@ -236,18 +240,16 @@ class DeticDenseLabelledDataset(Dataset):
                     )
                     reshaped_rgb = einops.rearrange(image, "c h w -> h w c")
 
-                    for label in range(self._num_true_lseg_classes):
+                    for label in range(len(self._all_classes)):
                         pred_mask = predict.squeeze(0) == label
                         total_points = len(reshaped_coordinates[pred_mask])
                         if total_points:
-                            class_text_id = self._lseg_class_labels[
-                                self._all_lseg_classes[label]
-                            ]
                             self._label_xyz.append(reshaped_coordinates[pred_mask])
                             self._label_rgb.append(reshaped_rgb[pred_mask])
                             # Ideally, this should give all classes their true class label.
                             self._text_ids.append(
-                                torch.ones(total_points) * class_text_id
+                                torch.ones(total_points)
+                                * self._new_class_to_old_class_mapping[label]
                             )
                             # Uniform label confidence of LSEG_LABEL_WEIGHT
                             self._label_weight.append(
@@ -271,7 +273,7 @@ class DeticDenseLabelledDataset(Dataset):
 
         # Now, get all the sentence encoding for all the labels.
         text_strings = [
-            x.replace("-", " ").replace("_", " ") for x in self._all_classes
+            DeticDenseLabelledDataset.process_text(x) for x in self._all_classes
         ]
         text_strings += self._all_classes
         with torch.no_grad():
@@ -330,19 +332,47 @@ class DeticDenseLabelledDataset(Dataset):
     def __len__(self):
         return len(self._label_xyz)
 
+    @staticmethod
+    def process_text(x: str) -> str:
+        return x.replace("-", " ").replace("_", " ").lstrip().rstrip().lower()
+
     def _setup_detic_all_classes(self, habitat_view_data: HabitatViewDataset):
         # Unifying all the class labels.
         predictor = DefaultPredictor(cfg)
-        prebuilt_class_names = list(habitat_view_data._id_to_name.values())
-        prebuilt_class_set = set(prebuilt_class_names)
+        prebuilt_class_names = [
+            DeticDenseLabelledDataset.process_text(x)
+            for x in habitat_view_data._id_to_name.values()
+        ]
+        prebuilt_class_set = (
+            set(prebuilt_class_names) if self._use_gt_classes else set()
+        )
         filtered_new_classes = (
             [x for x in CLASS_LABELS_200 if x not in prebuilt_class_set]
             if self._use_extra_classes
             else []
         )
-        self._all_classes = ["Other"] + prebuilt_class_names + filtered_new_classes
+
+        self._all_classes = prebuilt_class_names + filtered_new_classes
+
+        if self._use_gt_classes:
+            self._new_class_to_old_class_mapping = {
+                x: x for x in range(len(self._all_classes))
+            }
+        else:
+            # We are not using all classes, so we should map which new/extra class maps
+            # to which old class.
+            for class_idx, class_name in enumerate(self._all_classes):
+                if class_name in prebuilt_class_set:
+                    old_idx = prebuilt_class_names.index(class_name)
+                else:
+                    old_idx = len(prebuilt_class_names) + filtered_new_classes.index(
+                        class_name
+                    )
+                self._new_class_to_old_class_mapping[class_idx] = old_idx
+
+        print(self._new_class_to_old_class_mapping)
         self._all_classes = [
-            x.replace("-", " ").replace("_", " ").lower() for x in self._all_classes
+            DeticDenseLabelledDataset.process_text(x) for x in self._all_classes
         ]
         new_metadata = MetadataCatalog.get("__unused")
         new_metadata.thing_classes = self._all_classes
@@ -370,11 +400,11 @@ class DeticDenseLabelledDataset(Dataset):
         self._num_true_lseg_classes = len(self._lseg_classes)
         self._all_lseg_classes = self._all_classes  # + ["Other"]
 
-        self._unfound_offset = 0
-        # Figure out the class labels.
-        self._lseg_class_labels = {
-            classname: self.find_in_class(classname) for classname in self._all_classes
-        }
+        # self._unfound_offset = 0
+        # # Figure out the class labels.
+        # self._lseg_class_labels = {
+        #     classname: self.find_in_class(classname) for classname in self._all_classes
+        # }
         # We will try to classify all the classes, but will use LSeg labels for classes that
         # are not identified by Detic.
 

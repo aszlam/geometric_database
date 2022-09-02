@@ -24,7 +24,7 @@ class ClipLabelledLocation(Dataset):
         sentence_encoding_model_name="all-mpnet-base-v2",
         device: str = "cuda",
         batch_size: int = 128,
-        semantic_weight: float = 10.0,
+        semantic_weight: float = 3.0,
     ):
         self.loc_dataset = location_dataset
         model, _ = clip.load(clip_model_name, device=device)
@@ -55,10 +55,11 @@ class ClipLabelledLocation(Dataset):
     ):
         # Step 1: set up all the clip vectors for the tags.
         # Tokenize all the names.
-        text_strings = [self.EMPTY]
+        # text_strings = [self.EMPTY]
+        text_strings = []
         for name in id_to_name.values():
             text_strings.append(self.PROMPT + name.replace("-", " ").replace("_", " "))
-
+        text_strings.append(self.EMPTY)
         with torch.no_grad():
             all_embedded_text = sentence_model.encode(text_strings)
             all_embedded_text = torch.from_numpy(all_embedded_text).float()
@@ -67,7 +68,7 @@ class ClipLabelledLocation(Dataset):
         for id in id_to_name.keys():
             self._id_to_clip_vector[id] = all_embedded_text[id]
         # The empty index
-        self._id_to_clip_vector[0] = all_embedded_text[0]
+        self._id_to_clip_vector[-1] = all_embedded_text[-1]
 
         # Step 2: set up clip vector for every view images.
         # set up dataloader
@@ -151,6 +152,7 @@ class ClassificationExtractor:
         del clip_model
         del sentence_model
 
+        self.class_names = text_strings
         self.total_label_classes = len(text_strings)
         self._sentence_embed_size = all_embedded_text.size(-1)
         self._clip_embed_size = clip_encoded_text.size(-1)
