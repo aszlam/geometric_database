@@ -3,7 +3,7 @@ defaults:
   - scene: hm3d_00217
   - override hydra/launcher: submitit_slurm
 
-project: grid_lf_seed
+project: grid_lf_gt_only
 deterministic_id: true
 device: cuda
 use_cache: true
@@ -19,7 +19,7 @@ mlp_width: 600
 log2_hashmap_size: 20
 
 seed: 42
-epochs: 150
+epochs: 100
 exp_decay_coeff: 0.5
 image_to_label_loss_ratio: 1.0
 label_to_image_loss_ratio: 0.1
@@ -30,14 +30,14 @@ num_workers: 10
 
 # Number of ground truth labeled images
 num_inst_segmented_images: 5
-num_sem_segmented_images: 96
-num_web_segmented_images: 135
+num_sem_segmented_images: 5
+num_web_segmented_images: 0
 gt_segmentation_baseline: false
 use_lseg: true
 use_extra_classes: true
 use_gt_classes_in_detic: true
-eval_only_on_seen_inst: true
 gt_semantic_weight: 10.0
+eval_only_on_seen_inst: true
 exclude_diffuse_classes_in_test: true
 semantic_class_remapping_in_test: false
 
@@ -51,7 +51,7 @@ betas:
   - 0.9
   - 0.999
 
-save_directory: "lf_seed/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "lf_zero_web/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
 web_models:
   clip: "ViT-B/32"
@@ -70,11 +70,13 @@ hydra:
   sweeper:
     params:
       scene: hm3d_00250,hm3d_00263,hm3d_00179,hm3d_00217,hm3d_00582,hm3d_00706
-      num_sem_segmented_images: 0,48,96
-      num_web_segmented_images: 0,135
+      num_inst_segmented_images: 1,3,5
+      num_sem_segmented_images: 0,6,12,24,48
+      # num_web_segmented_images: 0,135
   
   launcher:
-    timeout_min: 315
+    # timeout_min: 315
+    timeout_min: 240
     # timeout_min: 60
     cpus_per_task: 10
     gpus_per_node: 1
