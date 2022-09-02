@@ -36,8 +36,8 @@ gt_segmentation_baseline: false
 use_lseg: true
 use_extra_classes: true
 use_gt_classes_in_detic: true
-eval_only_on_seen_inst: true
 gt_semantic_weight: 10.0
+eval_only_on_seen_inst: true
 exclude_diffuse_classes_in_test: true
 semantic_class_remapping_in_test: false
 

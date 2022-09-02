@@ -1,4 +1,5 @@
 import logging
+from typing import List, Optional
 import clip
 import einops
 import os
@@ -108,6 +109,9 @@ class DeticDenseLabelledDataset(Dataset):
         use_lseg: bool = True,
         use_extra_classes: bool = True,
         use_gt_classes: bool = True,
+        exclude_gt_images: bool = True,
+        gt_inst_images: Optional[List[int]] = None,
+        gt_sem_images: Optional[List[int]] = None,
     ):
         dataset = habitat_view_dataset
 
@@ -133,9 +137,11 @@ class DeticDenseLabelledDataset(Dataset):
         self._text_id_to_feature = {}
         self._image_features = []
         self._distance = []
+
+        self._exclude_gt_image = exclude_gt_images
         # Now, set up all the points and their labels.
         images_to_label = self.get_best_sem_segmented_images(
-            dataset, num_images_to_label
+            dataset, num_images_to_label, gt_inst_images, gt_sem_images
         )
 
         self._use_lseg = use_lseg
@@ -147,12 +153,26 @@ class DeticDenseLabelledDataset(Dataset):
             dataset, images_to_label, clip_model, sentence_model
         )
 
-    def get_best_sem_segmented_images(self, dataset, num_images_to_label=300):
+    def get_best_sem_segmented_images(
+        self,
+        dataset,
+        num_images_to_label=300,
+        gt_inst_images: Optional[List[int]] = None,
+        gt_sem_images: Optional[List[int]] = None,
+    ):
         # Using depth as a proxy for object diversity in a scene.
-        num_objects_and_images = [
-            (dataset[idx]["depth"].max() - dataset[idx]["depth"].min(), idx)
-            for idx in range(len(dataset))
-        ]
+        if self._exclude_gt_image:
+            assert gt_inst_images is not None
+            assert gt_sem_images is not None
+        num_objects_and_images = []
+        for idx in range(len(dataset)):
+            if self._exclude_gt_image:
+                if idx in gt_inst_images or idx in gt_sem_images:
+                    continue
+            num_objects_and_images.append(
+                dataset[idx]["depth"].max() - dataset[idx]["depth"].min(), idx
+            )
+
         sorted_num_object_and_img = sorted(
             num_objects_and_images, key=lambda x: x[0], reverse=True
         )

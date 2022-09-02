@@ -424,6 +424,7 @@ def get_habitat_dataset(
     eval_only_on_seen_inst: bool = False,
     exclude_diffuse_classes: bool = False,
     class_remapping: Optional[Dict[str, str]] = None,
+    exclude_gt_images: bool = True,
 ):
     gt_segmentation_baseline = gt_segmentation_baseline or (
         num_web_segmented_images == 0
@@ -440,22 +441,6 @@ def get_habitat_dataset(
         dataset,
         lengths=[train_split_size, len(dataset) - train_split_size],
     )
-    lseg_str = "lseg" if use_lseg else "no_lseg"
-    extra_classes_str = "" if use_extra_classes else "_no_sn_200"
-    use_gt_classes_str = "" if use_gt_classes else "_no_gt_classes"
-    if use_cache and not gt_segmentation_baseline:
-        cache_fp = f".cache/{lseg_str}{extra_classes_str}{use_gt_classes_str}_labeled_dataset_{base_scene}_{grid_size}_{image_size}_{num_web_segmented_images}.pt"
-        if os.path.exists(cache_fp):
-            location_train_dataset_1 = torch.load(cache_fp)
-        else:
-            location_train_dataset_1 = DeticDenseLabelledDataset(
-                view_train_dataset,
-                num_images_to_label=num_web_segmented_images,
-                use_lseg=use_lseg,
-                use_extra_classes=use_extra_classes,
-                use_gt_classes=use_gt_classes,
-            )
-            torch.save(location_train_dataset_1, cache_fp)
     # Now we will have to create more dataloaders for the CLIP dataset.
     if use_cache:
         cache_fp = f".cache/habitat_gt_dataset_{base_scene}_{grid_size}_{image_size}_{num_inst_segmented_images}_{num_sem_segmented_images}.pt"
@@ -508,6 +493,34 @@ def get_habitat_dataset(
                 semantic_weight=gt_semantic_weight,
             )
             torch.save(clip_test_dataset, cache_fp)
+
+    lseg_str = "lseg" if use_lseg else "no_lseg"
+    extra_classes_str = "" if use_extra_classes else "_no_sn_200"
+    use_gt_classes_str = "" if use_gt_classes else "_no_gt_classes"
+    no_gt_images_str = (
+        ""
+        if not exclude_gt_images
+        else f"_no_gt_imgs_{num_inst_segmented_images}_{num_sem_segmented_images}"
+    )
+    condition_str = (
+        f"{lseg_str}{extra_classes_str}{use_gt_classes_str}{no_gt_images_str}"
+    )
+    if use_cache and not gt_segmentation_baseline:
+        cache_fp = f".cache/{condition_str}_labeled_dataset_{base_scene}_{grid_size}_{image_size}_{num_web_segmented_images}.pt"
+        if os.path.exists(cache_fp):
+            location_train_dataset_1 = torch.load(cache_fp)
+        else:
+            location_train_dataset_1 = DeticDenseLabelledDataset(
+                view_train_dataset,
+                num_images_to_label=num_web_segmented_images,
+                use_lseg=use_lseg,
+                use_extra_classes=use_extra_classes,
+                use_gt_classes=use_gt_classes,
+                exclude_gt_images=exclude_gt_images,
+                gt_inst_images=clip_train_dataset.loc_dataset._inst_segmented_images,
+                gt_sem_images=clip_train_dataset.loc_dataset._sem_segmented_images,
+            )
+            torch.save(location_train_dataset_1, cache_fp)
 
     clip_test_dataset._semantic_weight = torch.tensor(gt_semantic_weight)
 
@@ -857,6 +870,7 @@ def main(cfg):
             )
         epoch += 1
     return test_accuracy
+
 
 if __name__ == "__main__":
     main()
