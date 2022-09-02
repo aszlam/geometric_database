@@ -46,7 +46,7 @@ cache_only_run: false
 
 # Learning rate data
 lr: 1e-4
-weight_decay: 0.01
+weight_decay: 0.003
 betas:
   - 0.9
   - 0.999
