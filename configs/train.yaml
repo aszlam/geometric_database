@@ -115,7 +115,7 @@ hydra:
       #   lower: 0.0
       #   upper: 1.0
       #   step: 0.1
-      batch_size:
+      point_batch_size:
         init: 12544
         lower: 128
         upper: 12544

@@ -7,15 +7,12 @@ import habitat_sim.registry as registry
 from habitat_sim.utils.data import PoseExtractor
 from typing import Callable, List, Union, Optional
 
-import numpy as np
-
 import habitat_sim
 from habitat_sim import bindings as hsim
 from habitat_sim import registry as registry
 from habitat_sim.agent.agent import AgentConfiguration, AgentState
 from habitat_sim.utils.data.data_structures import ExtractorLRUCache
 from habitat_sim.utils.data.pose_extractor import PoseExtractor, TopdownView
-from itertools import product
 import logging
 
 import torch

@@ -198,7 +198,7 @@ class DeticDenseLabelledDataset(Dataset):
                     self._label_rgb.append(reshaped_rgb[pred_mask])
                     self._text_ids.append(
                         torch.ones(total_points)
-                        * self._new_class_to_old_class_mapping[pred_class]
+                        * self._new_class_to_old_class_mapping[pred_class.item()]
                     )
                     self._label_weight.append(torch.ones(total_points) * pred_score)
                     self._image_features.append(
