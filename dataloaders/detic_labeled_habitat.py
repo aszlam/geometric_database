@@ -170,7 +170,7 @@ class DeticDenseLabelledDataset(Dataset):
                 if idx in gt_inst_images or idx in gt_sem_images:
                     continue
             num_objects_and_images.append(
-                dataset[idx]["depth"].max() - dataset[idx]["depth"].min(), idx
+                (dataset[idx]["depth"].max() - dataset[idx]["depth"].min(), idx)
             )
 
         sorted_num_object_and_img = sorted(

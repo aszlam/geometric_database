@@ -657,11 +657,11 @@ def main(cfg):
     # Assume the classes go from 0 up to class labels.
     train_class_count = {
         "semantic": train_classifier.total_label_classes,
-        "instance": 1024,
+        "instance": len(parent_train_dataset.loc_dataset.instance_id_to_name) + 1,
     }
     test_class_count = {
         "semantic": test_classifier.total_label_classes,
-        "instance": 1024,
+        "instance": len(parent_train_dataset.loc_dataset.instance_id_to_name) + 1,
     }
     average_style = ["micro", "macro", "weighted"]
     for classes, counts in train_class_count.items():
@@ -700,7 +700,10 @@ def main(cfg):
             mlp_depth=cfg.mlp_depth,
             mlp_width=cfg.mlp_width,
             log2_hashmap_size=cfg.log2_hashmap_size,
-            segmentation_classes=1024,  # Quick patch
+            segmentation_classes=len(
+                parent_train_dataset.loc_dataset.instance_id_to_name
+            )
+            + 1,  # Quick patch
             num_levels=cfg.num_grid_levels,
             level_dim=cfg.level_dim,
             per_level_scale=cfg.per_level_scale,
@@ -830,6 +833,16 @@ def main(cfg):
     wandb.config.web_labelled_points = len(clip_train_dataset) - len(
         parent_train_dataset
     )
+    wandb.config.num_seen_instances = len(
+        clip_train_dataset.loc_dataset.valid_instance_ids
+    )
+    seen_instances = wandb.Artifact("seen_instances", "dataset")
+    table = wandb.Table(
+        columns=["instances"],
+        data=[[x] for x in clip_train_dataset.loc_dataset.valid_instance_ids],
+    )
+    seen_instances.add(table, "my_table")
+    wandb.log_artifact(seen_instances)
 
     # Disable tqdm if we are running inside slurm
     job_id = os.environ.get("SLURM_JOB_ID")

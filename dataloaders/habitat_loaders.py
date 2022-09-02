@@ -236,6 +236,7 @@ class HabitatLocationDataset(Dataset):
         num_inst_segmented_images: int = 5,
         num_sem_segmented_images: int = 100,
         return_nonsegmented_images: bool = True,
+        semantically_segment_instance_labeled: bool = False,
         use_only_valid_instance_ids: bool = False,
         valid_instance_ids: Optional[Iterable[int]] = None,
         exclude_diffuse_classes: bool = False,
@@ -282,6 +283,9 @@ class HabitatLocationDataset(Dataset):
         self.instance_id_to_name = image_extractor.instance_id_to_name
 
         self._return_nonsegmented_images = return_nonsegmented_images
+        self._semantically_segment_instance_labeled = (
+            semantically_segment_instance_labeled
+        )
         self.coordinates = []
         self.semantic_label = []
         self.instance_label = []
@@ -331,8 +335,6 @@ class HabitatLocationDataset(Dataset):
         else:
             self.mask_excluded_class = lambda x: np.zeros_like(x).astype(bool)
 
-        print(self._excluded_classes)
-
         # Precompute the camera intrinsics from the view dataset.
         self._get_intrinsics(habitat_view_data)
         self._extract_dataset(habitat_view_ds)
@@ -377,9 +379,15 @@ class HabitatLocationDataset(Dataset):
                 einops.rearrange(all_xyz, "d w h-> (w h) d")[subsampled]
             )
             # Right now, using the ground truth semantic segmentation.
-            self.semantic_label.append(
-                self._get_semantic_labels_from_image(data_dict, subsampled)
-            )
+            semantic_data = self._get_semantic_labels_from_image(data_dict, subsampled)
+            if self._semantically_segment_instance_labeled or (idx in self._sem_segmented_images):
+                self.semantic_label.append(
+                    semantic_data
+                )
+            else:
+                self.semantic_label.append(
+                    -1 * np.ones_like(semantic_data)
+                )
             # Only selectively give instance segmentation.
             if idx in self._inst_segmented_images:
                 valid_instance_labels = self.map_to_valid_instance_id(
