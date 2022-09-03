@@ -188,7 +188,7 @@ def train(
                 language_label_index < classifier.total_label_classes,
             ).squeeze(-1)
             if not torch.any(semseg_mask):
-                classification_loss = 0
+                classification_loss = torch.zeros_like(contrastive_loss_images)
             else:
                 # Figure out the right classes.
                 masked_class_prob = class_probs[semseg_mask]
@@ -227,13 +227,18 @@ def train(
         "train_avg/instance_loss": total_inst_segmentation_loss / total_samples,
         "train_avg/semseg_loss": total_classification_loss / total_samples,
         "train_avg/loss_sum": total_loss / total_samples,
-        "train_avg/labelling_temp": torch.exp(
-            labelling_model.temperature.data.detach()
-        ),
+        "train_avg/labelling_temp": torch.exp(labelling_model.temperature.data.detach())
+        .cpu()
+        .item(),
     }
     for metric_dict in metric_calculators.values():
         for metric_name, metric in metric_dict.items():
-            to_log[f"train_avg/{metric_name}"] = metric.compute().detach().cpu().item()
+            try:
+                to_log[f"train_avg/{metric_name}"] = (
+                    metric.compute().detach().cpu().item()
+                )
+            except RuntimeError as e:
+                to_log[f"train_avg/{metric_name}"] = 0.0
             metric.reset()
 
     wandb.log(to_log)
@@ -375,7 +380,12 @@ def test(
     }
     for metric_dict in metric_calculators.values():
         for metric_name, metric in metric_dict.items():
-            to_log[f"test_avg/{metric_name}"] = metric.compute().detach().cpu().item()
+            try:
+                to_log[f"test_avg/{metric_name}"] = (
+                    metric.compute().detach().cpu().item()
+                )
+            except RuntimeError as e:
+                to_log[f"test_avg/{metric_name}"] = 0.0
             metric.reset()
 
     wandb.log(to_log)
@@ -400,9 +410,8 @@ def test(
         to_save,
         f"outputs/implicit_models/{save_directory}/implicit_scene_label_model_latest.pt",
     )
-    return (
-        -to_log["test_avg/semantic_accuracy_micro"]
-        - to_log["test_avg/instance_accuracy_micro"]
+    return -to_log.get("test_avg/semantic_accuracy_micro", 0) - to_log.get(
+        "test_avg/instance_accuracy_micro", 0
     )
 
 
@@ -429,6 +438,13 @@ def get_habitat_dataset(
     gt_segmentation_baseline = gt_segmentation_baseline or (
         num_web_segmented_images == 0
     )
+    if num_inst_segmented_images == 0 and num_sem_segmented_images == 0:
+        web_only = True
+        num_inst_segmented_images = 1
+        # num_sem_segmented_images = 1
+        eval_only_on_seen_inst = False
+    else:
+        web_only = False
     dataset = HabitatViewDataset(
         habitat_scenes=habitat_scenes,
         pose_extractor_grid_size=grid_size,
@@ -453,6 +469,7 @@ def get_habitat_dataset(
                 return_nonsegmented_images=gt_segmentation_baseline,
                 num_inst_segmented_images=num_inst_segmented_images,
                 num_sem_segmented_images=num_sem_segmented_images,
+                semantically_segment_instance_labeled=False,
                 # In the GT segmentation baseline, we get all image segmentation data.
             )
             # Convert to clip datasets
@@ -524,12 +541,15 @@ def get_habitat_dataset(
 
     clip_test_dataset._semantic_weight = torch.tensor(gt_semantic_weight)
 
-    if not gt_segmentation_baseline:
+    if not gt_segmentation_baseline and not web_only:
         clip_train_dataset_concat = ConcatDataset(
             [clip_train_dataset, location_train_dataset_1]
         )
     else:
-        clip_train_dataset_concat = clip_train_dataset
+        if gt_segmentation_baseline:
+            clip_train_dataset_concat = clip_train_dataset
+        elif web_only:
+            clip_train_dataset_concat = location_train_dataset_1
 
     # Close dataset sim
     dataset.image_extractor.sim.close()
@@ -647,8 +667,6 @@ def main(cfg):
         class_names=test_label_set,
         device=cfg.device,
     )
-    print(train_classifier.class_names)
-    print(test_classifier.class_names)
 
     # Set up our metrics on this dataset.
     train_metric_calculators = {}
@@ -668,7 +686,10 @@ def main(cfg):
         train_metric_calculators[classes] = {}
         for metric_name, metric_cls in METRICS.items():
             for avg in average_style:
-                new_metric = metric_cls(num_classes=counts, average=avg).to(cfg.device)
+                if "accuracy" in metric_name:
+                    new_metric = metric_cls(
+                        num_classes=counts, average=avg, multiclass=True
+                    ).to(cfg.device)
                 train_metric_calculators[classes][
                     f"{classes}_{metric_name}_{avg}"
                 ] = new_metric
@@ -834,12 +855,12 @@ def main(cfg):
         parent_train_dataset
     )
     wandb.config.num_seen_instances = len(
-        clip_train_dataset.loc_dataset.valid_instance_ids
+        parent_train_dataset.loc_dataset.valid_instance_ids
     )
     seen_instances = wandb.Artifact("seen_instances", "dataset")
     table = wandb.Table(
         columns=["instances"],
-        data=[[x] for x in clip_train_dataset.loc_dataset.valid_instance_ids],
+        data=[[x] for x in parent_train_dataset.loc_dataset.valid_instance_ids],
     )
     seen_instances.add(table, "my_table")
     wandb.log_artifact(seen_instances)
