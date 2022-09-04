@@ -134,18 +134,20 @@ class HabitatSegmentationDataset(Dataset):
         final_labels = []
 
         for i in range(num_objs):
-            if (obj_ids[i] + 1) not in self.valid_classes:
-                continue
             pos = np.where(masks[i])
             xmin = np.min(pos[1])
             xmax = np.max(pos[1])
             ymin = np.min(pos[0])
             ymax = np.max(pos[0])
             if xmin < xmax and ymin < ymax:
-                boxes.append([xmin, ymin, xmax, ymax])
                 final_masks.append(masks[i])
-                final_labels.append(obj_ids[i] + 1)
+                boxes.append([xmin, ymin, xmax, ymax])
+                if (obj_ids[i] + 1) not in self.valid_classes:
+                    final_labels.append(0)  # Treat as background class.
+                else:
+                    final_labels.append(obj_ids[i] + 1)
         if len(final_masks) == 0:
+            # There were no objects in the scene, pure noise?
             final_masks.append(np.ones_like(masks[0]))
             final_labels.append(0)
             # Add the whole image as background.
