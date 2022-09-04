@@ -29,7 +29,7 @@ class HabitatSegmentationDataset(Dataset):
         mode: str = "instance_segmentation",
     ):
         self.habitat_dataset = habitat_dataset
-        self.crowd_classes = {"wall", "floor", "ceiling"}
+        self.crowd_classes = {"wall", "floor", "ceiling", "background"}
         self.transforms = transforms
 
         assert mode in ["instance_segmentation", "semantic_segmentation"]
@@ -145,6 +145,11 @@ class HabitatSegmentationDataset(Dataset):
                 boxes.append([xmin, ymin, xmax, ymax])
                 final_masks.append(masks[i])
                 final_labels.append(obj_ids[i] + 1)
+        if len(final_masks) == 0:
+            final_masks.append(np.ones_like(masks[0]))
+            final_labels.append(0)
+            # Add the whole image as background.
+            boxes.append([0, 0, final_masks[-1].shape[0], final_masks[-1].shape[1]])
 
         # convert everything into a torch.Tensor
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
@@ -159,8 +164,8 @@ class HabitatSegmentationDataset(Dataset):
         # Figure out the crowd instance
 
         iscrowd = []
-        for inst_id in final_labels:
-            inst_name = self.id_to_name[inst_id.item() - 1]
+        for inst_id in labels:
+            inst_name = self.id_to_name.get(inst_id.item() - 1, "background")
             inst_name = (
                 inst_name.replace("-", " ").replace("_", "").lower().lstrip().rstrip()
             )
