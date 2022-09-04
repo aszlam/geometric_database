@@ -4,7 +4,7 @@ defaults:
   - override hydra/launcher: submitit_slurm
   - override hydra/sweeper: nevergrad
 
-project: grid_lf_hparam_search_3
+project: grid_lf_hparam_search_4
 deterministic_id: false
 device: cuda
 use_cache: true
@@ -48,12 +48,12 @@ cache_only_run: false
 
 # Learning rate data
 lr: 1e-4
-weight_decay: 0.01
+weight_decay: 0.003
 betas:
   - 0.9
   - 0.999
 
-save_directory: "lf_hparams/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "lf_hparams_const/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
 
 web_models:
   clip: "ViT-B/32"
@@ -80,7 +80,7 @@ hydra:
     optim:
       optimizer: OnePlusOne
       budget: 120
-      num_workers: 10
+      num_workers: 15
     parametrization:
       # num_grid_levels:
       #   init: 18
@@ -115,27 +115,57 @@ hydra:
       #   lower: 0.0
       #   upper: 1.0
       #   step: 0.1
-      point_batch_size:
-        init: 12544
-        lower: 128
-        upper: 12544
-        integer: True
-        log: True
-      lr:
-        init: 1e-4
-        lower: 1e-6
-        upper: 1e-1
+      # point_batch_size:
+      #   init: 12544
+      #   lower: 128
+      #   upper: 12544
+      #   integer: True
+      #   log: True
+      # lr:
+      #   init: 1e-4
+      #   lower: 1e-6
+      #   upper: 1e-1
+      #   log: true
+      # weight_decay:
+      #   init: 0.01
+      #   lower: 0.0
+      #   upper: 1.0
+      # epochs:
+      #   init: 100
+      #   lower: 10
+      #   upper: 200
+      #   step: 10
+      #   integer: True
+      image_to_label_loss_ratio:
+        init: 1.0
+        lower: 1e-2
+        upper: 100.0
+        step: 10.0
         log: true
-      weight_decay:
-        init: 0.01
-        lower: 0.0
-        upper: 1.0
-      epochs:
-        init: 100
-        lower: 10
-        upper: 200
-        step: 10
-        integer: True
+        integer: false
+      
+      label_to_image_loss_ratio:
+        init: 1.0
+        lower: 1e-2
+        upper: 100.0
+        step: 10.0
+        log: true
+        integer: false
+
+      instance_loss_scale:
+        init: 10.0
+        lower: 1e-2
+        upper: 1e3
+        step: 3.0
+        log: true
+
+      gt_semantic_weight:
+        init: 10.0
+        lower: 1e-2
+        upper: 1e3
+        step: 3.0
+        log: true
+      # [2022-09-03 06:27:58,754][HYDRA] Best parameters: image_to_label_loss_ratio=0.0285488365561206 label_to_image_loss_ratio=1.1624107548180094 instance_loss_scale=57.006589519063574 gt_semantic_weight=5.409722965353708
       # action_ae.num_bins:
       #   init: 64
       #   lower: 32
@@ -151,7 +181,8 @@ hydra:
       #   log: True
   
   launcher:
-    timeout_min: 320
+    # timeout_min: 320
+    timeout_min: 160
     # timeout_min: 60
     cpus_per_task: 10
     gpus_per_node: 1
