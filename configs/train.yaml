@@ -4,7 +4,7 @@ defaults:
   - override hydra/launcher: submitit_slurm
 
 project: grid_lf_web_only
-deterministic_id: true
+deterministic_id: false
 device: cuda
 use_cache: true
 point_batch_size: 12544
@@ -19,7 +19,7 @@ mlp_width: 600
 log2_hashmap_size: 20
 
 seed: 42
-epochs: 105
+epochs: 100
 exp_decay_coeff: 0.5
 image_to_label_loss_ratio: 1.0
 label_to_image_loss_ratio: 0.1
@@ -51,7 +51,13 @@ betas:
   - 0.9
   - 0.999
 
-save_directory: "lf_zero_web/{}/${scene.image_size}_px_${num_inst_segmented_images}_2_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "lf_web_only/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+
+# 2d model parameters.
+two_dim_models:
+  mode: instance_segmentation
+  project: twod_baseline
+  model_class: Faster_RCNN_ResNet50_FPN
 
 web_models:
   clip: "ViT-B/32"
@@ -76,8 +82,8 @@ hydra:
   
   launcher:
     # timeout_min: 315
-    # timeout_min: 180
-    timeout_min: 20
+    timeout_min: 240
+    # timeout_min: 20
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1

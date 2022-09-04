@@ -1,7 +1,9 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 import hydra
+import wandb
+from omegaconf import OmegaConf
 
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -22,30 +24,58 @@ class HabitatSegmentationDataset(Dataset):
         self,
         habitat_dataset: HabitatViewDataset,
         transforms,
-        num_inst_segmented_images: int = 5,
+        num_segmented_images: int = 5,
         valid_classes: Optional[List] = None,
+        mode: str = "instance_segmentation",
     ):
         self.habitat_dataset = habitat_dataset
-        self.chosen_indices, self.chosen_classes = self.choose_images_to_inst_segment(
-            habitat_dataset, num_inst_segmented_images
-        )
-        self.id_to_name: Dict[int, str] = habitat_dataset.dataset.id_to_name
         self.crowd_classes = {"wall", "floor", "ceiling"}
         self.transforms = transforms
+
+        assert mode in ["instance_segmentation", "semantic_segmentation"]
+        self.mode = mode
+
+        if "instance" in self.mode:
+            self.id_to_name: Dict[int, str] = habitat_dataset.dataset.id_to_name
+            choice_fn = self.choose_images_to_inst_segment
+        else:
+            self.id_to_name: Dict[int, str] = habitat_dataset.dataset._id_to_name
+            choice_fn = self.get_best_sem_segmented_images
+
+        self.chosen_indices, self.chosen_classes = choice_fn(
+            habitat_dataset, num_segmented_images
+        )
         if valid_classes is None:
             self.valid_classes = self.chosen_classes
         else:
             self.valid_classes = valid_classes
 
+    def get_best_sem_segmented_images(
+        self, habitat_view_dataset, num_segmented_images=50
+    ) -> Tuple[List[int], List[int]]:
+        dataset = habitat_view_dataset
+        # Using depth as a proxy for object diversity in a scene.
+        num_objects_and_images = [
+            (dataset[idx]["depth"].max() - dataset[idx]["depth"].min(), idx)
+            for idx in range(len(dataset))
+        ]
+        sorted_num_object_and_img = sorted(
+            num_objects_and_images, key=lambda x: x[0], reverse=True
+        )
+        # All classes are valid for semantic segmentation.
+        return [x[1] for x in sorted_num_object_and_img[:num_segmented_images]], list(
+            self.id_to_name.keys()
+        )
+
     def choose_images_to_inst_segment(
         self, habitat_view_dataset, num_segmented_image=5
-    ):
+    ) -> Tuple[List[int], List[int]]:
         best_set_so_far = set()
         chosen_images_so_far = set()
         num_chosen_images = num_segmented_image
         dataset = habitat_view_dataset
         unique_sets = [
-            set(torch.unique(dataset[idx]["instance_segmentation"]).tolist())
+            set(torch.unique(dataset[idx][self.mode]).tolist())
             for idx in range(len(dataset))
         ]
         for _ in range(num_chosen_images):
@@ -85,7 +115,7 @@ class HabitatSegmentationDataset(Dataset):
         # note that we haven't converted the mask to RGB,
         # because each color corresponds to a different instance
         # with 0 being background
-        mask = habitat_data_dict["instance_segmentation"].numpy()
+        mask = habitat_data_dict[self.mode].numpy()
         # convert the PIL Image into a numpy array
         mask = np.array(mask)
         # instances are encoded as different colors
@@ -155,10 +185,22 @@ class HabitatSegmentationDataset(Dataset):
         return img, target
 
 
-def get_model_instance_segmentation(num_classes):
+MODEL_DICT = {
+    "FCN_ResNet50": torchvision.models.segmentation.fcn_resnet50,
+    "FCN_ResNet101": torchvision.models.segmentation.fcn_resnet101,
+    "Faster_RCNN_ResNet50_FPN": torchvision.models.detection.maskrcnn_resnet50_fpn,
+    "DeepLabV3_ResNet50": torchvision.models.segmentation.deeplabv3_resnet50,
+    "DeepLabV3_ResNet101": torchvision.models.segmentation.deeplabv3_resnet101,
+}
+
+
+def get_model_segmentation(model_name, num_classes):
     # load an instance segmentation model pre-trained on COCO
     # model = torchvision.models.detection.maskrcnn_resnet50_fpn(weights="DEFAULT")
-    model = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True)
+    model_class = MODEL_DICT.get(
+        model_name, torchvision.models.detection.maskrcnn_resnet50_fpn
+    )
+    model = model_class(pretrained=True)
 
     # get number of input features for the classifier
     in_features = model.roi_heads.box_predictor.cls_score.in_features
@@ -210,16 +252,23 @@ def main(cfg):
         dataset,
         lengths=[train_split_size, len(dataset) - train_split_size],
     )
+    num_train_images = (
+        cfg.num_inst_segmented_images
+        if "inst" in cfg.two_dim_models.mode
+        else cfg.num_sem_segmented_images
+    )
     dataset_train = HabitatSegmentationDataset(
         view_train_dataset,
         get_transform(train=True),
-        num_inst_segmented_images=train_split_size,
+        num_segmented_images=num_train_images,
+        mode=cfg.two_dim_models.mode,
     )
     dataset_test = HabitatSegmentationDataset(
         view_test_dataset,
         get_transform(train=False),
-        num_inst_segmented_images=train_split_size,
+        num_segmented_images=train_split_size,
         valid_classes=dataset_train.valid_classes,
+        mode=cfg.two_dim_models.mode,
     )
 
     # define training and validation data loaders
@@ -238,9 +287,22 @@ def main(cfg):
         num_workers=0,
         collate_fn=utils.collate_fn,
     )
+    if cfg.deterministic_id:
+        run_id = f"2d_{cfg.scene.base}_{cfg.two_dim_models.model_class}_{cfg.scene.image_size}i{cfg.num_inst_segmented_images}s{cfg.num_sem_segmented_images}w{cfg.num_web_segmented_images}"
+    else:
+        run_id = wandb.util.generate_id()
+    wandb.init(
+        project=cfg.two_dim_models.project,
+        id=run_id,
+        tags=[
+            f"model/{cfg.two_dim_models.model_class}",
+            f"scene/{cfg.scene.base}",
+        ],
+        config=OmegaConf.to_container(cfg, resolve=True),
+    )
 
     # get the model using our helper function
-    model = get_model_instance_segmentation(num_classes)
+    model = get_model_segmentation(cfg.two_dim_models.model_class, num_classes)
 
     # move model to the right device
     model.to(device)
@@ -256,14 +318,31 @@ def main(cfg):
     eval_every = 10
 
     for epoch in range(num_epochs):
+        to_log = {}
         # train for one epoch, printing every 10 iterations
-        train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=10)
+        metric_logger = train_one_epoch(
+            model, optimizer, data_loader, device, epoch, print_freq=10
+        )
+        for name, meter in metric_logger.meters.items():
+            to_log[f"{name}_median"] = meter.median
+            to_log[f"{name}_avg"] = meter.global_avg
         # update the learning rate
         lr_scheduler.step()
         # evaluate on the test dataset
         if epoch % eval_every == 0 or epoch == (num_epochs - 1):
-            evaluate(model, data_loader_test, device=device)
-
+            _, summary_results = evaluate(model, data_loader_test, device=device)
+            # Log summary results to WandB.
+            # We only care about the segmentation results, so we are going for that
+            segm_results = summary_results[1]
+            avg_precision = segm_results[0]
+            avg_recall = segm_results[6]
+            to_log.update(
+                {
+                    "test/avg_precision": avg_precision,
+                    "test/avg_recall": avg_recall,
+                }
+            )
+        wandb.log(to_log)
     print("That's it!")
 
 
