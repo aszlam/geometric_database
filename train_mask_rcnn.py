@@ -4,6 +4,7 @@ import torch
 import hydra
 import wandb
 from omegaconf import OmegaConf
+from itertools import chain
 
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -29,7 +30,7 @@ class HabitatSegmentationDataset(Dataset):
         mode: str = "instance_segmentation",
     ):
         self.habitat_dataset = habitat_dataset
-        self.crowd_classes = {"wall", "floor", "ceiling", "background"}
+        self.crowd_classes = {"wall", "floor", "ceiling", "background", "unknown"}
         self.transforms = transforms
 
         assert mode in ["instance_segmentation", "semantic_segmentation"]
@@ -216,7 +217,7 @@ def get_model_segmentation(model_name, num_classes):
 
     # now get the number of input features for the mask classifier
     in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
-    hidden_layer = 256
+    hidden_layer = 1024
     # and replace the mask predictor with a new one
     model.roi_heads.mask_predictor = MaskRCNNPredictor(
         in_features_mask, hidden_layer, num_classes
@@ -310,7 +311,9 @@ def main(cfg):
 
     # get the model using our helper function
     model = get_model_segmentation(cfg.two_dim_models.model_class, num_classes)
-
+    if cfg.two_dim_models.freeze_backbone:
+        for param in chain(model.backbone.parameters(), model.rpn.parameters()):
+            param.requires_grad = False
     # move model to the right device
     model.to(device)
 
@@ -320,7 +323,7 @@ def main(cfg):
     # and a learning rate scheduler
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
-    # let's train it for 10 epochs
+    # let's train it for 100 epochs
     num_epochs = cfg.epochs
     eval_every = 10
 
