@@ -1,6 +1,6 @@
 [submodule "lang-seg"]
 	path = lang-seg
-	url = https://github.com/notmahi/LSeg.git
+	url = git@github.com:notmahi/LSeg.git
 [submodule "Detic"]
 	path = Detic
-	url = https://github.com/notmahi/Detic.git
+	url = git@github.com:notmahi/Detic.git
