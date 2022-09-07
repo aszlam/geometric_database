@@ -1,6 +1,6 @@
 [submodule "lang-seg"]
 	path = lang-seg
-	url = https://github.com/isl-org/lang-seg.git
+	url = https://github.com/notmahi/LSeg.git
 [submodule "Detic"]
 	path = Detic
-	url = https://github.com/facebookresearch/Detic.git
+	url = https://github.com/notmahi/Detic.git
