@@ -8,4 +8,5 @@
         b. Important to install pytorch from conda, my pytorch installation from PIP would freeze and crash sometimes.
 3. Install the pip requirements, `pip install -r requirements.txt`
 4. Log in to wandb, optionally, if you want to track the trainings.
+5. Create a `.cache` directory for caching dataloader (speeds up subsequent runs).
 5. Run `python train_surface_model.py` to train the implicit models. See `configs/train.yaml` to figure out the configs.
