@@ -6,6 +6,7 @@ import os
 import torch
 import tqdm
 
+import numpy as np
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
 from dataloaders.habitat_loaders import HabitatViewDataset
@@ -204,18 +205,23 @@ class DeticDenseLabelledDataset(Dataset):
                     )[0]
                 # Now extract the results from the image and store them
                 instance = result["instances"]
-                reshaped_coordinates = einops.rearrange(coordinates, "c h w -> h w c")
                 reshaped_rgb = einops.rearrange(image, "c h w -> h w c")
+                (
+                    reshaped_coordinates,
+                    valid_mask,
+                ) = self._reshape_coordinates_and_get_valid(coordinates, data_dict)
                 for pred_class, pred_mask, pred_score, feature in zip(
                     instance.pred_classes.cpu(),
                     instance.pred_masks.cpu(),
                     instance.scores.cpu(),
                     instance.features.cpu(),
                 ):
+                    real_mask = pred_mask[valid_mask]
+                    real_mask_rect = valid_mask & pred_mask
                     # Go over each instance and add it to the DB.
-                    total_points = len(reshaped_coordinates[pred_mask])
-                    self._label_xyz.append(reshaped_coordinates[pred_mask])
-                    self._label_rgb.append(reshaped_rgb[pred_mask])
+                    total_points = len(reshaped_coordinates[real_mask])
+                    self._label_xyz.append(reshaped_coordinates[real_mask])
+                    self._label_rgb.append(reshaped_rgb[real_mask_rect])
                     self._text_ids.append(
                         torch.ones(total_points)
                         * self._new_class_to_old_class_mapping[pred_class.item()]
@@ -255,17 +261,20 @@ class DeticDenseLabelledDataset(Dataset):
                         predicts = [torch.max(output, 1)[1].cpu() for output in outputs]
                     predict = predicts[0]
 
-                    reshaped_coordinates = einops.rearrange(
-                        coordinates, "c h w -> h w c"
-                    )
+                    (
+                        reshaped_coordinates,
+                        valid_mask,
+                    ) = self._reshape_coordinates_and_get_valid(coordinates, data_dict)
                     reshaped_rgb = einops.rearrange(image, "c h w -> h w c")
 
                     for label in range(len(self._all_classes)):
                         pred_mask = predict.squeeze(0) == label
-                        total_points = len(reshaped_coordinates[pred_mask])
+                        real_mask = pred_mask[valid_mask]
+                        real_mask_rect = valid_mask & pred_mask
+                        total_points = len(reshaped_coordinates[real_mask])
                         if total_points:
-                            self._label_xyz.append(reshaped_coordinates[pred_mask])
-                            self._label_rgb.append(reshaped_rgb[pred_mask])
+                            self._label_xyz.append(reshaped_coordinates[real_mask])
+                            self._label_rgb.append(reshaped_rgb[real_mask_rect])
                             # Ideally, this should give all classes their true class label.
                             self._text_ids.append(
                                 torch.ones(total_points)
@@ -333,6 +342,24 @@ class DeticDenseLabelledDataset(Dataset):
         self._distance = self._distance[resampled_indices]
         self._instance = self._instance[resampled_indices]
 
+    def _reshape_coordinates_and_get_valid(self, coordinates, data_dict):
+        if "conf" in data_dict:
+            # Real world data, find valid mask
+            valid_mask = (
+                torch.as_tensor(
+                    (~np.isnan(data_dict["depth"]) & (data_dict["conf"] == 2))
+                    & (data_dict["depth"] < 3.0)
+                )
+                .squeeze(0)
+                .bool()
+            )
+            reshaped_coordinates = torch.as_tensor(coordinates)
+            return reshaped_coordinates, valid_mask
+        else:
+            reshaped_coordinates = einops.rearrange(coordinates, "c h w -> (h w) c")
+            valid_mask = torch.ones_like(coordinates).mean(dim=0).bool()
+            return reshaped_coordinates, valid_mask
+
     def __getitem__(self, idx):
         # Create a dictionary with all relevant results.
         return {
@@ -390,7 +417,6 @@ class DeticDenseLabelledDataset(Dataset):
                     )
                 self._new_class_to_old_class_mapping[class_idx] = old_idx
 
-        print(self._new_class_to_old_class_mapping)
         self._all_classes = [
             DeticDenseLabelledDataset.process_text(x) for x in self._all_classes
         ]
