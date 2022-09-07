@@ -4,6 +4,7 @@ import torch
 import hydra
 import wandb
 from omegaconf import OmegaConf
+from itertools import chain
 
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -18,6 +19,86 @@ import segmentation_model.transforms as T
 from segmentation_model.engine import train_one_epoch, evaluate
 import segmentation_model.utils as utils
 
+from detectron2.utils.logger import setup_logger
+
+import os
+import sys
+from pathlib import Path
+
+# import some common detectron2 utilities
+from detectron2.config import get_cfg
+from detectron2.data import MetadataCatalog
+from detectron2.engine import DefaultPredictor
+
+DETIC_PATH = os.environ.get("DETIC_PATH", Path.home() / "code/Detic")
+# Detic libraries
+sys.path.insert(0, f"{DETIC_PATH}/third_party/CenterNet2/")
+sys.path.insert(0, f"{DETIC_PATH}/")
+from centernet.config import add_centernet_config
+from detic.config import add_detic_config
+from detic.modeling.utils import reset_cls_test
+from detic.modeling.text.text_encoder import build_text_encoder
+
+
+BUILDIN_CLASSIFIER = {
+    "lvis": f"{DETIC_PATH}/datasets/metadata/lvis_v1_clip_a+cname.npy",
+    "objects365": f"{DETIC_PATH}/datasets/metadata/o365_clip_a+cnamefix.npy",
+    "openimages": f"{DETIC_PATH}/datasets/metadata/oid_clip_a+cname.npy",
+    "coco": f"{DETIC_PATH}/datasets/metadata/coco_clip_a+cname.npy",
+}
+
+BUILDIN_METADATA_PATH = {
+    "lvis": "lvis_v1_val",
+    "objects365": "objects365_v2_val",
+    "openimages": "oid_val_expanded",
+    "coco": "coco_2017_val",
+}
+
+
+def get_clip_embeddings(vocabulary, prompt="a "):
+    text_encoder = build_text_encoder(pretrain=True)
+    text_encoder.eval()
+    texts = [prompt + x.replace("-", " ") for x in vocabulary]
+    emb = text_encoder(texts).detach().permute(1, 0).contiguous().cpu()
+    return emb
+
+
+def setup_detic_model(class_names, detic_threshold=0.3):
+    cfg = get_cfg()
+    add_centernet_config(cfg)
+    add_detic_config(cfg)
+    cfg.merge_from_file(
+        f"{DETIC_PATH}/configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml"
+    )
+    cfg.MODEL.WEIGHTS = "https://dl.fbaipublicfiles.com/detic/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth"
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # set threshold for this model
+    cfg.MODEL.ROI_BOX_HEAD.ZEROSHOT_WEIGHT_PATH = "rand"
+    cfg.MODEL.ROI_HEADS.ONE_CLASS_PER_PROPOSAL = (
+        False  # For better visualization purpose. Set to False for all classes.
+    )
+    cfg.MODEL.ROI_BOX_HEAD.CAT_FREQ_PATH = (
+        f"{DETIC_PATH}/datasets/metadata/lvis_v1_train_cat_info.json"
+    )
+    # cfg.MODEL.DEVICE='cpu' # uncomment this to use cpu-only mode.
+
+    # Setup the model's vocabulary using build-in datasets
+
+    vocabulary = "lvis"  # change to 'lvis', 'objects365', 'openimages', or 'coco'
+    # metadata = MetadataCatalog.get(BUILDIN_METADATA_PATH[vocabulary])
+    predictor = DefaultPredictor(cfg)
+    new_metadata = MetadataCatalog.get("__unused")
+    new_metadata.thing_classes = class_names
+    classifier = get_clip_embeddings(new_metadata.thing_classes)
+    num_classes = len(new_metadata.thing_classes)
+
+    reset_cls_test(predictor.model, classifier, num_classes)
+    output_score_threshold = detic_threshold
+    for cascade_stages in range(len(predictor.model.roi_heads.box_predictor)):
+        predictor.model.roi_heads.box_predictor[
+            cascade_stages
+        ].test_score_thresh = output_score_threshold
+    return predictor.model
+
 
 class HabitatSegmentationDataset(Dataset):
     def __init__(
@@ -29,7 +110,7 @@ class HabitatSegmentationDataset(Dataset):
         mode: str = "instance_segmentation",
     ):
         self.habitat_dataset = habitat_dataset
-        self.crowd_classes = {"wall", "floor", "ceiling"}
+        self.crowd_classes = {"wall", "floor", "ceiling", "background", "unknown"}
         self.transforms = transforms
 
         assert mode in ["instance_segmentation", "semantic_segmentation"]
@@ -134,17 +215,24 @@ class HabitatSegmentationDataset(Dataset):
         final_labels = []
 
         for i in range(num_objs):
-            if (obj_ids[i] + 1) not in self.valid_classes:
-                continue
             pos = np.where(masks[i])
             xmin = np.min(pos[1])
             xmax = np.max(pos[1])
             ymin = np.min(pos[0])
             ymax = np.max(pos[0])
             if xmin < xmax and ymin < ymax:
-                boxes.append([xmin, ymin, xmax, ymax])
                 final_masks.append(masks[i])
-                final_labels.append(obj_ids[i] + 1)
+                boxes.append([xmin, ymin, xmax, ymax])
+                if (obj_ids[i] + 1) not in self.valid_classes:
+                    final_labels.append(0)  # Treat as background class.
+                else:
+                    final_labels.append(obj_ids[i] + 1)
+        if len(final_masks) == 0:
+            # There were no objects in the scene, pure noise?
+            final_masks.append(np.ones_like(masks[0]))
+            final_labels.append(0)
+            # Add the whole image as background.
+            boxes.append([0, 0, final_masks[-1].shape[0], final_masks[-1].shape[1]])
 
         # convert everything into a torch.Tensor
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
@@ -159,8 +247,8 @@ class HabitatSegmentationDataset(Dataset):
         # Figure out the crowd instance
 
         iscrowd = []
-        for inst_id in final_labels:
-            inst_name = self.id_to_name[inst_id.item() - 1]
+        for inst_id in labels:
+            inst_name = self.id_to_name.get(inst_id.item() - 1, "background")
             inst_name = (
                 inst_name.replace("-", " ").replace("_", "").lower().lstrip().rstrip()
             )
@@ -194,27 +282,31 @@ MODEL_DICT = {
 }
 
 
-def get_model_segmentation(model_name, num_classes):
+def get_model_segmentation(model_name, class_names):
     # load an instance segmentation model pre-trained on COCO
     # model = torchvision.models.detection.maskrcnn_resnet50_fpn(weights="DEFAULT")
-    model_class = MODEL_DICT.get(
-        model_name, torchvision.models.detection.maskrcnn_resnet50_fpn
-    )
-    model = model_class(pretrained=True)
+    if model_name == "detic":
+        return setup_detic_model(class_names)
+    else:
+        num_classes = len(class_names)
+        model_class = MODEL_DICT.get(
+            model_name, torchvision.models.detection.maskrcnn_resnet50_fpn
+        )
+        model = model_class(pretrained=True)
 
-    # get number of input features for the classifier
-    in_features = model.roi_heads.box_predictor.cls_score.in_features
-    # replace the pre-trained head with a new one
-    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+        # get number of input features for the classifier
+        in_features = model.roi_heads.box_predictor.cls_score.in_features
+        # replace the pre-trained head with a new one
+        model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
 
-    # now get the number of input features for the mask classifier
-    in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
-    hidden_layer = 256
-    # and replace the mask predictor with a new one
-    model.roi_heads.mask_predictor = MaskRCNNPredictor(
-        in_features_mask, hidden_layer, num_classes
-    )
-    return model
+        # now get the number of input features for the mask classifier
+        in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
+        hidden_layer = 1024
+        # and replace the mask predictor with a new one
+        model.roi_heads.mask_predictor = MaskRCNNPredictor(
+            in_features_mask, hidden_layer, num_classes
+        )
+        return model
 
 
 def get_transform(train):
@@ -301,11 +393,68 @@ def main(cfg):
         config=OmegaConf.to_container(cfg, resolve=True),
     )
 
+    class_names = ["background"] + list(dataset.id_to_name.values())
     # get the model using our helper function
-    model = get_model_segmentation(cfg.two_dim_models.model_class, num_classes)
-
+    model = get_model_segmentation(
+        cfg.two_dim_models.model_class, class_names=class_names
+    )
     # move model to the right device
     model.to(device)
+
+    if cfg.two_dim_models.model_class == "detic":
+
+        class CustomDeticWrapper(torchvision.models.detection.MaskRCNN):
+            def __init__(self, detic_model):
+                from torchvision.models.detection.backbone_utils import (
+                    resnet_fpn_backbone,
+                )
+
+                super().__init__(
+                    backbone=resnet_fpn_backbone("resnet50", True), num_classes=100
+                )
+                self.detic_model = detic_model
+
+            def __call__(self, img):
+                pred = self.detic_model(
+                    [
+                        {
+                            "image": img[0] * 255,
+                            "height": cfg.scene.image_size,
+                            "width": cfg.scene.image_size,
+                        }
+                    ]
+                )[0]
+                pred = pred["instances"]
+                result = {
+                    "boxes": pred.pred_boxes,
+                    "masks": pred.pred_masks,
+                    "labels": pred.pred_classes,
+                    "scores": pred.scores,
+                }
+                return [result]
+
+            def eval(self):
+                return self.detic_model.eval()
+
+        model_to_eval = CustomDeticWrapper(model)
+        _, summary_results = evaluate(model_to_eval, data_loader_test, device=device)
+        # Log summary results to WandB.
+        # We only care about the segmentation results, so we are going for that
+        segm_results = summary_results[1]
+        avg_precision = segm_results[0]
+        avg_recall = segm_results[6]
+        to_log.update(
+            {
+                "test/avg_precision": avg_precision,
+                "test/avg_recall": avg_recall,
+            }
+        )
+        wandb.log(to_log)
+        exit(0)
+
+    if cfg.two_dim_models.freeze_backbone:
+        for param in chain(model.backbone.parameters(), model.rpn.parameters()):
+            param.requires_grad = False
 
     # construct an optimizer
     params = [p for p in model.parameters() if p.requires_grad]
@@ -313,7 +462,7 @@ def main(cfg):
     # and a learning rate scheduler
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
-    # let's train it for 10 epochs
+    # let's train it for 100 epochs
     num_epochs = cfg.epochs
     eval_every = 10
 

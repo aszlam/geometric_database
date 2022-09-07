@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - scene: hm3d_00217
+  - scene: hm3d_00250
   - override hydra/launcher: submitit_slurm
 
 project: grid_lf_gt_only
@@ -29,7 +29,7 @@ dataparallel: false
 num_workers: 10
 
 # Number of ground truth labeled images
-num_inst_segmented_images: 0
+num_inst_segmented_images: 1
 num_sem_segmented_images: 0
 num_web_segmented_images: 15
 gt_segmentation_baseline: false
@@ -83,8 +83,8 @@ hydra:
 
   launcher:
     # timeout_min: 315
-    timeout_min: 240
-    # timeout_min: 20
+    # timeout_min: 120
+    timeout_min: 60
     cpus_per_task: 10
     gpus_per_node: 1
     tasks_per_node: 1
@@ -93,7 +93,7 @@ hydra:
     name: ${hydra.job.name}
     _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
     signal_delay_s: 120
-    max_num_timeout: 10
+    max_num_timeout: 1
     additional_parameters: {}
     array_parallelism: 256
     setup: null

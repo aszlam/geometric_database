@@ -399,8 +399,11 @@ class DeticDenseLabelledDataset(Dataset):
             else []
         )
 
-        self._all_classes = prebuilt_class_names + filtered_new_classes
+        self._all_classes = (
+            prebuilt_class_names if self._use_gt_classes else []
+        ) + filtered_new_classes
 
+        self._new_class_to_old_class_mapping = {}
         if self._use_gt_classes:
             self._new_class_to_old_class_mapping = {
                 x: x for x in range(len(self._all_classes))
