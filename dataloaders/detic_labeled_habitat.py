@@ -29,7 +29,7 @@ from detectron2.data import MetadataCatalog
 from detectron2.engine import DefaultPredictor
 
 
-DETIC_PATH = os.environ.get("DETIC_PATH", Path.home() / "code/Detic")
+DETIC_PATH = os.environ.get("DETIC_PATH", Path.home() / "code/geometric_database/Detic")
 LSEG_PATH = os.environ.get(
     "LSEG_PATH", Path.home() / "code/geometric_database/lang-seg/"
 )
