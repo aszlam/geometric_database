@@ -18,3 +18,4 @@ openai-clip
 einops
 pyquaternion
 sentence-transformers
+pyntcloud
