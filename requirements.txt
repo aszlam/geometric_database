@@ -17,3 +17,4 @@ wandb
 openai-clip
 einops
 pyquaternion
+sentence-transformers

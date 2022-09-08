@@ -10,3 +10,22 @@
 4. Log in to wandb, optionally, if you want to track the trainings.
 5. Create a `.cache` directory for caching dataloader (speeds up subsequent runs).
 5. Run `python train_surface_model.py` to train the implicit models. See `configs/train.yaml` to figure out the configs.
+
+
+## Create conda env
+
+example environment creation
+
+```bash
+conda create -n geom python=3.7
+conda activate geom
+conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch
+conda install habitat-sim headless withbullet -c aihabitat
+conda install opencv
+conda install sentence-transformers -c conda-forge
+
+# Detectron2
+pip install git+https://github.com/zhanghang1989/PyTorch-Encoding/
+python -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
+```
+
