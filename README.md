@@ -12,7 +12,7 @@
 5. Run `python train_surface_model.py` to train the implicit models. See `configs/train.yaml` to figure out the configs.
 
 
-## Create conda env
+## Create conda env and test
 
 example environment creation
 
@@ -29,3 +29,12 @@ pip install git+https://github.com/zhanghang1989/PyTorch-Encoding/
 python -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
 ```
 
+Set paths to detic or lang-seg:
+```
+source set_paths.sh
+# or just add them to your .bashrc or something
+```
+
+Then run
+```
+```
