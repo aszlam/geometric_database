@@ -35,6 +35,9 @@ source set_paths.sh
 # or just add them to your .bashrc or something
 ```
 
-Then run
+Then you can run:
 ```
+conda activate geom
+source set_paths.sh  # helper if running from repo root
+python train_surface_model.py
 ```
