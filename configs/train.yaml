@@ -3,7 +3,7 @@ defaults:
   - scene: hm3d_00250
   - override hydra/launcher: submitit_slurm
 
-project: grid_lf_gt_only
+project: grid_real
 deterministic_id: true
 device: cuda
 use_cache: true
@@ -31,7 +31,7 @@ num_workers: 10
 # Number of ground truth labeled images
 num_inst_segmented_images: 1
 num_sem_segmented_images: 0
-num_web_segmented_images: 15
+num_web_segmented_images: 1
 gt_segmentation_baseline: false
 use_lseg: true
 use_extra_classes: false
@@ -40,6 +40,8 @@ gt_semantic_weight: 10.0
 eval_only_on_seen_inst: true
 exclude_diffuse_classes_in_test: true
 semantic_class_remapping_in_test: false
+
+saved_dataset_path: null
 
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
 cache_only_run: false
@@ -51,7 +53,8 @@ betas:
   - 0.9
   - 0.999
 
-save_directory: "lf_test/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory: "lf_real_w_lseg/{}/${scene.image_size}_px_${num_inst_segmented_images}_${num_sem_segmented_images}_${num_web_segmented_images}"
+save_directory_real: "lf_real_pit"
 
 # 2d model parameters.
 two_dim_models:
