@@ -30,8 +30,8 @@ num_workers: 10
 
 # Number of ground truth labeled images
 num_inst_segmented_images: 1
-num_sem_segmented_images: 0
-num_web_segmented_images: 15
+num_sem_segmented_images: 3
+num_web_segmented_images: 7
 gt_segmentation_baseline: false
 use_lseg: true
 use_extra_classes: false
