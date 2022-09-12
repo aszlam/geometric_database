@@ -17,13 +17,18 @@
 
 example environment creation
 
+You need ipykernel for adding to jupyter notebook
+
 ```bash
 conda create -n geom python=3.7
 conda activate geom
-conda install -y pytorch torchvision torchaudio cudatoolkit=11.1 -c pytorch-lts -c nvidia
-conda install -y habitat-sim headless withbullet -c aihabitat
-conda install -y opencv
-conda install -y sentence-transformers -c conda-forge
+conda install -y pytorch torchvision torchaudio cudatoolkit=11.1 -c pytorch-lts -c nvidia \
+ && conda install -y habitat-sim headless withbullet -c aihabitat \
+ && conda install -y ipykernel 
+
+pip install -U sentence-transformers
+pip install openai-clip
+pip install numpy-quaternion
 
 # Encoding for lang-seg
 pip install git+https://github.com/zhanghang1989/PyTorch-Encoding/
