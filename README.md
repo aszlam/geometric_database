@@ -29,6 +29,10 @@ conda install -y pytorch torchvision torchaudio cudatoolkit=11.1 -c pytorch-lts 
 pip install -U sentence-transformers
 pip install openai-clip
 pip install numpy-quaternion
+pip install pytorch-lightning==1.3.5
+pip install torchmetrics==0.6.0
+pip install opencv-python
+pip install pyntcloud==0.3.1
 
 # Encoding for lang-seg
 pip install git+https://github.com/zhanghang1989/PyTorch-Encoding/
