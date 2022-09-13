@@ -651,6 +651,9 @@ def main(cfg):
     ).min(0)
     logging.info(f"Environment bounds: max {max_coords} min {min_coords}")
 
+    # Assume the classes go from 0 up to class labels.
+    num_instances = max(parent_train_dataset.loc_dataset.instance_id_to_name.keys())
+    num_instances = max(num_instances, len(parent_train_dataset.loc_dataset.instance_id_to_name))
     if cfg.cache_only_run:
         # Caching is done, so we can exit now.
         logging.info("Cache only run, exiting.")
@@ -672,14 +675,13 @@ def main(cfg):
     train_metric_calculators = {}
     test_metric_calculators = {}
 
-    # Assume the classes go from 0 up to class labels.
     train_class_count = {
         "semantic": train_classifier.total_label_classes,
-        "instance": len(parent_train_dataset.loc_dataset.instance_id_to_name) + 1,
+        "instance": num_instances + 1,
     }
     test_class_count = {
         "semantic": test_classifier.total_label_classes,
-        "instance": len(parent_train_dataset.loc_dataset.instance_id_to_name) + 1,
+        "instance": num_instances + 1,
     }
     average_style = ["micro", "macro", "weighted"]
     for classes, counts in train_class_count.items():
@@ -721,10 +723,7 @@ def main(cfg):
             mlp_depth=cfg.mlp_depth,
             mlp_width=cfg.mlp_width,
             log2_hashmap_size=cfg.log2_hashmap_size,
-            segmentation_classes=len(
-                parent_train_dataset.loc_dataset.instance_id_to_name
-            )
-            + 1,  # Quick patch
+            segmentation_classes=num_instances + 1,  # Quick patch
             num_levels=cfg.num_grid_levels,
             level_dim=cfg.level_dim,
             per_level_scale=cfg.per_level_scale,
