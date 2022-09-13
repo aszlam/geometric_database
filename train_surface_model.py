@@ -594,6 +594,11 @@ def get_real_dataset():
 
 @hydra.main(version_base="1.2", config_path="configs", config_name="train.yaml")
 def main(cfg):
+    if cfg.base_data_path is not None:
+        for i, p in enumerate(cfg.scene.filepath):
+            cfg.scene.filepath[i] = p.replace("/checkpoint/notmahi/data/", cfg.base_data_path)
+        print("replaced data path according to commandline:")
+        print(cfg.scene.filepath)
     seed_everything(cfg.seed)
     # Run basic sanity test on the dataloader.
     # Now, figure out if we are relabelling during test, and if so, add that to the
