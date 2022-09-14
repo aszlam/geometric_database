@@ -74,7 +74,6 @@ METRICS = {
     "recall": torchmetrics.Recall,
 }
 
-
 def seed_everything(seed: int):
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -418,6 +417,7 @@ def test(
 def get_habitat_dataset(
     base_scene=SCENE,
     habitat_scenes=SCENE_FILEPATH,
+    base_data_path="",
     grid_size=GRID_SIZE,
     image_size=IMAGE_SIZE,
     use_cache=CACHE,
@@ -450,6 +450,7 @@ def get_habitat_dataset(
         pose_extractor_grid_size=grid_size,
         image_size=(image_size, image_size),
         height_levels=0,
+        base_data_path=base_data_path
     )
     id_to_name = dataset._id_to_name
     train_split_size = len(dataset) // 2
@@ -618,6 +619,7 @@ def main(cfg):
     ) = get_habitat_dataset(
         base_scene=cfg.scene.base,
         habitat_scenes=cfg.scene.filepath,
+        base_data_path=cfg.base_data_path,
         grid_size=cfg.scene.grid_size,
         image_size=cfg.scene.image_size,
         use_cache=cfg.use_cache,

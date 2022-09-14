@@ -49,6 +49,7 @@ class HabitatViewDataset(Dataset):
         canonical_object_ids: bool = True,
         canonical_names_path: str = "dataloaders/object_maps.json",
         use_cache: bool = True,
+        base_data_path=""
     ):
         # Sets the grid size and the height levels in the pose extractor
         custom_pose_extractor_factory(pose_extractor_grid_size, height_levels)
@@ -58,7 +59,10 @@ class HabitatViewDataset(Dataset):
             else list(habitat_scenes)
         )
         if "hm3d" in habitat_scenes[0]:
-            scene_cfg = "/checkpoint/notmahi/data/hm3d_semantic/data/versioned_data/hm3d-1.0/hm3d/hm3d_annotated_basis.scene_dataset_config.json"
+            if base_data_path:
+                scene_cfg = base_data_path + "hm3d_semantic/data/versioned_data/hm3d-1.0/hm3d/hm3d_annotated_basis.scene_dataset_config.json"
+            else:
+                scene_cfg = "/checkpoint/notmahi/data/hm3d_semantic/data/versioned_data/hm3d-1.0/hm3d/hm3d_annotated_basis.scene_dataset_config.json"
         else:
             scene_cfg = None
         assert len(image_size) == 2
