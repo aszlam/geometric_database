@@ -11,6 +11,11 @@ git+https://github.com/facebookresearch/detectron2.git
 pandas==1.4.3
 pyntcloud==0.3.1
 hydra-submitit-launcher==1.2.0
+openai-clip
+einops
+pyquaternion
+sentence-transformers
+pyntcloud
 torch-encoding==1.2.2b20200804
 torchmetrics==0.6.0
 sentence-transformers==2.2.2

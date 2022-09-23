@@ -10,6 +10,11 @@ core
 wrapper.sh
 multirun
 
+# Temporary files
+*.swp
+*.swn
+*.swo
+
 # C/C++ bindings files
 *.so
 *.o
