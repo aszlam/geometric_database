@@ -41,6 +41,9 @@ eval_only_on_seen_inst: true
 exclude_diffuse_classes_in_test: true
 semantic_class_remapping_in_test: false
 
+# data folder path
+base_data_path: NULL
+
 # Cache only runs are for building per-dataset caches, which can be used for multi-run later.
 cache_only_run: false
 
